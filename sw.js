@@ -11,16 +11,22 @@ self.addEventListener('activate', (event) => {
     event.waitUntil(clients.claim())
 })
 
-// Handle notification clicks
+// Handle notification clicks - also send message to client for TTS
 self.addEventListener('notificationclick', (event) => {
+    const notificationBody = event.notification.body
     event.notification.close()
 
     // Focus the window if open, otherwise open new
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-            // If a window is already open, focus it
+            // If a window is already open, focus it and send TTS message
             for (const client of clientList) {
                 if (client.url && 'focus' in client) {
+                    // Send notification body to client for TTS playback
+                    client.postMessage({
+                        type: 'NOTIFICATION_CLICK',
+                        body: notificationBody
+                    })
                     return client.focus()
                 }
             }
