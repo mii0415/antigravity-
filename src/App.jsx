@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { dbGet, dbSet, dbDel, dbKeys } from './db'
 import { Send, Folder, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLeft, ChevronRight, Brain, Trash2, Image, Files, Book, Plus, Settings, Upload, Crop, Check, ZoomIn, Move, Edit2, Save, RotateCw, RefreshCw, Key, Loader, Star, DownloadCloud, Menu, MessageSquare } from 'lucide-react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import './index.css'
@@ -175,114 +176,187 @@ const getTouchZone = (relativeY) => {
 function App() {
   // --- STATE: Multi-Session Chat ---
   // 1. Session Metadata List
-  const [sessions, setSessions] = useState(() => {
-    const saved = localStorage.getItem('antigravity_sessions')
-    return saved ? JSON.parse(saved) : [{ id: 'default', title: '新しいチャット', lastUpdated: Date.now() }]
-  })
+  const [sessions, setSessions] = useState([]) // Init empty, load async
 
   // 2. Active Session ID
-  const [activeSessionId, setActiveSessionId] = useState(() => {
-    return localStorage.getItem('antigravity_active_session_id') || 'default'
-  })
+  const [activeSessionId, setActiveSessionId] = useState('default')
 
   // 3. Messages (Load from Active Session or Migrate)
-  const [messages, setMessages] = useState(() => {
-    // Migration Logic: Check if we have legacy messages but no sessions yet
-    if (!localStorage.getItem('antigravity_sessions')) {
-      const legacy = localStorage.getItem('antigravity_messages')
-      const initialSessions = [{ id: 'default', title: '新しいチャット', lastUpdated: Date.now() }]
-      localStorage.setItem('antigravity_sessions', JSON.stringify(initialSessions))
+  const [messages, setMessages] = useState([])
 
-      if (legacy) {
-        // Migrate legacy to default session
-        localStorage.setItem('antigravity_chat_default', legacy)
-        // localStorage.removeItem('antigravity_messages') // Keep backup for safety?
-        return JSON.parse(legacy)
+  const [isLoading, setIsLoading] = useState(true) // Initial Loading State
+
+  // --- EFFECT: Initial Data Load (IndexedDB with Migration) ---
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        // 1. Check if DB has data
+        const keys = await dbKeys()
+        const hasData = keys.length > 0
+
+        if (!hasData) {
+          // --- MIGRATION: localStorage -> IndexedDB ---
+          console.log('Migrating from localStorage to IndexedDB...')
+
+          const migrate = async (key, defaultVal) => {
+            const lsVal = localStorage.getItem(key)
+            const val = lsVal ? JSON.parse(lsVal) : defaultVal
+            if (val !== undefined) await dbSet(key, val)
+            return val
+          }
+
+          const sess = await migrate('antigravity_sessions', [{ id: 'default', title: '新しいチャット', lastUpdated: Date.now() }])
+          const aSid = localStorage.getItem('antigravity_active_session_id') || 'default'
+          await dbSet('antigravity_active_session_id', aSid)
+
+          await migrate('antigravity_profiles', null) // profiles
+          await migrate('antigravity_ui_mode', 'visual_novel') // Default to visual_novel if not set? No, respect LS.
+
+          // API Key
+          const apiKey = localStorage.getItem('antigravity_api_key')
+          if (apiKey) await dbSet('antigravity_api_key', apiKey)
+
+          // Chat Histories
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i)
+            if (k && k.startsWith('antigravity_chat_')) {
+              const v = localStorage.getItem(k)
+              if (v) await dbSet(k, JSON.parse(v))
+            }
+          }
+
+          // Other Settings
+          await migrate('antigravity_model', 'gemini-2.5-flash')
+          await migrate('antigravity_openrouter_key', '')
+          await migrate('antigravity_custom_or_model', '')
+
+          localStorage.removeItem('antigravity_profiles') // Free up space immediately
+
+          // Set State
+          setSessions(sess)
+          setActiveSessionId(aSid)
+          // For active session messages
+          const msgData = localStorage.getItem(`antigravity_chat_${aSid}`)
+          setMessages(msgData ? JSON.parse(msgData) : [{ id: 1, sender: 'ai', text: 'こんにちは！Antigravityへようこそ。' }])
+
+        } else {
+          // --- STANDARD LOAD from DB ---
+          const sess = await dbGet('antigravity_sessions') || [{ id: 'default', title: '新しいチャット', lastUpdated: Date.now() }]
+          setSessions(sess)
+
+          const aSid = await dbGet('antigravity_active_session_id') || 'default'
+          setActiveSessionId(aSid)
+
+          const msgData = await dbGet(`antigravity_chat_${aSid}`)
+          setMessages(msgData || [{ id: 1, sender: 'ai', text: 'こんにちは！Antigravityへようこそ。' }])
+        }
+      } catch (e) {
+        console.error('Data Load Failed:', e)
+        alert('データの読み込みに失敗しました。')
+      } finally {
+        setIsLoading(false)
       }
     }
-
-    // Standard Load
-    const currentSessionId = localStorage.getItem('antigravity_active_session_id') || 'default'
-    const sessionData = localStorage.getItem(`antigravity_chat_${currentSessionId}`)
-    return sessionData ? JSON.parse(sessionData) : [{ id: 1, sender: 'ai', text: 'こんにちは！Antigravityへようこそ。' }]
-  })
+    loadData()
+  }, [])
 
   // --- EFFECT: Persist Sessions Metadata ---
   useEffect(() => {
-    if (sessions) {
-      localStorage.setItem('antigravity_sessions', JSON.stringify(sessions))
+    if (sessions.length > 0) {
+      dbSet('antigravity_sessions', sessions).catch(e => console.warn('Failed to save sessions', e))
     }
   }, [sessions])
 
   // --- EFFECT: Persist Active Session ID ---
   useEffect(() => {
-    localStorage.setItem('antigravity_active_session_id', activeSessionId)
+    dbSet('antigravity_active_session_id', activeSessionId).catch(console.warn)
   }, [activeSessionId])
 
   // --- EFFECT: Persist Messages to Active Session ---
   useEffect(() => {
-    try {
-      localStorage.setItem(`antigravity_chat_${activeSessionId}`, JSON.stringify(messages))
-
-      // Update session metadata (Last Updated / Title Snippet?)
-      // We do this debounced or here simple? 
-      // Let's just update the timestamp in sessions list if needed, but maybe expensive to do every keystroke.
-      // We will update title explicitly on "New Chat" or "First Message" logic later if we want auto-titles.
-    } catch (e) {
-      console.error('Message Save Failed:', e)
-      if (e.name === 'QuotaExceededError') {
-        console.warn('LocalStorage full. History not saved.')
-      }
+    if (messages.length > 0 || activeSessionId) {
+      dbSet(`antigravity_chat_${activeSessionId}`, messages).catch(e => {
+        console.error('Message Save Failed:', e)
+        if (e.name === 'QuotaExceededError') {
+          alert('保存容量がいっぱいです。')
+        }
+      })
     }
   }, [messages, activeSessionId])
 
-  const [selectedModel, setSelectedModel] = useState(() => {
-    const saved = localStorage.getItem('antigravity_model')
-    // Valid models list
-    // Valid models list (Gemini + OpenRouter User Requests)
-    const validModels = [
-      'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash-002',
-      'moonshotai/kimi-k2-thinking',
-      'z-ai/glm-4.6v',
-      'z-ai/glm-4.6',
-      'z-ai/glm-4.6:exacto'
-    ]
-    if (saved && (validModels.includes(saved) || saved.startsWith('ollama:') || saved.includes('/'))) {
-      return saved
-    }
-    return 'gemini-2.5-flash'
-  })
+  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash')
+  useEffect(() => {
+    // Model loading is handled in main loadData
+    dbGet('antigravity_model').then(m => { if (m) setSelectedModel(m) })
+  }, [])
+
+  useEffect(() => {
+    dbSet('antigravity_model', selectedModel).catch(console.warn)
+  }, [selectedModel])
   // --- STATE: API Key ---
-  const [apiKey, setApiKey] = useState(() => {
-    return localStorage.getItem('antigravity_api_key') || ''
-  })
-  const [isLoading, setIsLoading] = useState(false)
+  const [apiKey, setApiKey] = useState('')
+  useEffect(() => { dbGet('antigravity_api_key').then(k => { if (k) setApiKey(k) }) }, [])
+
 
   // --- STATE: Memory Profiles ---
-  const [profiles, setProfiles] = useState(() => {
-    const savedProfiles = localStorage.getItem('antigravity_profiles')
-    if (savedProfiles) {
-      return JSON.parse(savedProfiles)
+  // --- STATE: Memory Profiles ---
+  const [profiles, setProfiles] = useState([])
+
+  useEffect(() => {
+    if (!isLoading) {
+      dbGet('antigravity_profiles').then(p => {
+        if (p) {
+          setProfiles(p)
+        } else {
+          // Default Profile if not found
+          const oldSystemPrompt = localStorage.getItem('antigravity_system_prompt') || ''
+          const oldMemory = localStorage.getItem('antigravity_long_term_memory') || ''
+          setProfiles([{
+            id: 'default',
+            name: 'デフォルト',
+            systemPrompt: oldSystemPrompt,
+            memory: oldMemory,
+            iconImage: null,
+            iconSize: 40
+          }])
+        }
+      })
     }
-    const oldSystemPrompt = localStorage.getItem('antigravity_system_prompt') || ''
-    const oldMemory = localStorage.getItem('antigravity_long_term_memory') || ''
-    return [
-      {
-        id: 'default',
-        name: 'デフォルト',
-        systemPrompt: oldSystemPrompt,
-        memory: oldMemory,
-        iconImage: null,
-        iconSize: 40
-      }
-    ]
-  })
+  }, [isLoading])
+
+  // --- STATE: OpenRouter & Settings (Moved Up) ---
+  const [openRouterApiKey, setOpenRouterApiKey] = useState('')
+  const [customOpenRouterModel, setCustomOpenRouterModel] = useState('')
+
+  // --- STATE: Ollama & Models ---
+  const [ollamaUrl, setOllamaUrl] = useState('http://127.0.0.1:11434')
+
+  // --- STATE: UI Helpers ---
+  const [previewImage, setPreviewImage] = useState(null)
+  const [ollamaModels, setOllamaModels] = useState([])
+
+  // --- STATE: Anti-Censorship ---
+  const [useDummySettings, setUseDummySettings] = useState(false)
+  const [dummyModelName, setDummyModelName] = useState('UnrestrictedAI')
+  const [dummyUserName, setDummyUserName] = useState('Developer')
+  const [temperature, setTemperature] = useState(0.7)
+
+  // Load these settings when DB is ready
+  useEffect(() => {
+    if (!isLoading) {
+      dbGet('antigravity_openrouter_key').then(v => { if (v) setOpenRouterApiKey(v) })
+      dbGet('antigravity_custom_or_model').then(v => { if (v) setCustomOpenRouterModel(v) })
+      dbGet('antigravity_ollama_url').then(v => { if (v) setOllamaUrl(v) })
+      dbGet('antigravity_use_dummy').then(v => { if (v !== undefined) setUseDummySettings(v) })
+      dbGet('antigravity_dummy_model').then(v => { if (v) setDummyModelName(v) })
+      dbGet('antigravity_dummy_user').then(v => { if (v) setDummyUserName(v) })
+      dbGet('antigravity_temperature').then(v => { if (v) setTemperature(v) })
+    }
+  }, [isLoading])
 
 
 
-  const [activeProfileId, setActiveProfileId] = useState(() => {
-    return localStorage.getItem('antigravity_active_profile_id') || 'default'
-  })
+  const [activeProfileId, setActiveProfileId] = useState('default')
 
   // SAFETY: Ensure activeProfile is never null/undefined to prevent crash
   const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0] || {
@@ -306,7 +380,7 @@ function App() {
   const [inputText, setInputText] = useState('')
   const [isFolderOpen, setIsFolderOpen] = useState(false)
   const [isMemoryOpen, setIsMemoryOpen] = useState(false)
-  const [currentEmotion, setCurrentEmotion] = useState('default')
+  const [currentEmotion, setCurrentEmotion] = useState('normal')
 
   const [currentBackground, setCurrentBackground] = useState('default')
 
@@ -325,6 +399,36 @@ function App() {
   // --- STATE: File Attachment ---
   const [attachedFiles, setAttachedFiles] = useState([])
   const fileInputRef = useRef(null)
+
+  // --- STATE: Quick Add ---
+  const quickAddInputRef = useRef(null)
+  const quickAddTagRef = useRef(null)
+
+  const handleQuickAdd = (tag) => {
+    quickAddTagRef.current = tag
+    if (quickAddInputRef.current) {
+      quickAddInputRef.current.value = ''
+      quickAddInputRef.current.click()
+    }
+  }
+
+  const handleQuickAddFileSelect = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const tag = quickAddTagRef.current
+    if (!tag) return
+
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const currentEmotions = activeProfile.emotions || {}
+      if (currentEmotions[tag] && !window.confirm(`「${tag}」は既に登録済みです。画像を差し替えますか？`)) {
+        return
+      }
+      const newEmotions = { ...currentEmotions, [tag]: reader.result }
+      handleUpdateActiveProfile('emotions', newEmotions)
+    }
+    reader.readAsDataURL(file)
+  }
 
   // --- STATE: Icon Cropping ---
   const iconInputRef = useRef(null)
@@ -365,11 +469,11 @@ function App() {
     setIsFolderOpen(false) // Close sidebar on mobile after selection if needed
   }
 
-  const handleSwitchSession = (sessionId) => {
+  const handleSwitchSession = async (sessionId) => {
     setActiveSessionId(sessionId)
     // Force load from storage for that ID
-    const data = localStorage.getItem(`antigravity_chat_${sessionId}`)
-    setMessages(data ? JSON.parse(data) : [{ id: 1, sender: 'ai', text: 'こんにちは！' }])
+    const data = await dbGet(`antigravity_chat_${sessionId}`)
+    setMessages(data || [{ id: 1, sender: 'ai', text: 'こんにちは！' }])
     setIsFolderOpen(false)
   }
 
@@ -377,90 +481,79 @@ function App() {
     setSessions(prev => prev.map(s => s.id === id ? { ...s, title: newTitle } : s))
   }
 
-  const handleDeleteSession = (e, id) => {
+  const handleDeleteSession = async (e, id) => {
     e.stopPropagation()
     if (!window.confirm('このチャットを削除しますか？\n（復元できません）')) return
 
     // Remove from list
     const newSessions = sessions.filter(s => s.id !== id)
     setSessions(newSessions)
-    localStorage.removeItem(`antigravity_chat_${id}`)
+    await dbDel(`antigravity_chat_${id}`)
 
     // If we deleted the active one, switch to another
-    if (activeSessionId === id) {
-      if (newSessions.length > 0) {
-        handleSwitchSession(newSessions[0].id)
-      } else {
-        // No sessions left, create default
-        handleCreateSession()
-      }
+    if (activeSessionId === id && newSessions.length > 0) {
+      handleSwitchSession(newSessions[0].id)
+    } else if (newSessions.length === 0) {
+      handleCreateSession()
     }
   }
 
-  // --- STATE: Ollama & Models ---
-  const [ollamaUrl, setOllamaUrl] = useState(() => localStorage.getItem('antigravity_ollama_url') || 'http://127.0.0.1:11434')
 
-  // --- STATE: UI Helpers ---
-  const [previewImage, setPreviewImage] = useState(null) // For Click-to-Enlarge Modal
-  const [ollamaModels, setOllamaModels] = useState([])
-
-  // --- STATE: Anti-Censorship (Dummy Settings) ---
-  const [useDummySettings, setUseDummySettings] = useState(() => localStorage.getItem('antigravity_use_dummy') === 'true')
-  const [dummyModelName, setDummyModelName] = useState(() => localStorage.getItem('antigravity_dummy_model') || 'UnrestrictedAI')
-  const [dummyUserName, setDummyUserName] = useState(() => localStorage.getItem('antigravity_dummy_user') || 'Developer')
-  const [temperature, setTemperature] = useState(() => parseFloat(localStorage.getItem('antigravity_temperature')) || 0.7)
 
   // --- EFFECT: Saves for New Settings ---
   useEffect(() => {
-    localStorage.setItem('antigravity_ollama_url', ollamaUrl)
+    dbSet('antigravity_ollama_url', ollamaUrl).catch(console.warn)
   }, [ollamaUrl])
 
   useEffect(() => {
-    localStorage.setItem('antigravity_use_dummy', useDummySettings)
+    dbSet('antigravity_use_dummy', useDummySettings).catch(console.warn)
   }, [useDummySettings])
 
   useEffect(() => {
-    localStorage.setItem('antigravity_dummy_model', dummyModelName)
+    dbSet('antigravity_dummy_model', dummyModelName).catch(console.warn)
   }, [dummyModelName])
 
   useEffect(() => {
-    localStorage.setItem('antigravity_dummy_user', dummyUserName)
+    dbSet('antigravity_dummy_user', dummyUserName).catch(console.warn)
   }, [dummyUserName])
 
   useEffect(() => {
-    localStorage.setItem('antigravity_temperature', temperature)
+    dbSet('antigravity_temperature', temperature).catch(console.warn)
   }, [temperature])
 
   useEffect(() => {
-    try {
-      localStorage.setItem('antigravity_profiles', JSON.stringify(profiles))
-    } catch (e) {
-      console.error('Save failed:', e)
-      if (e.name === 'QuotaExceededError') {
-        alert('【保存失敗】ブラウザの保存容量がいっぱいです。\nこれ以上画像を保存できません。古い画像やプロファイルを削除してください。')
-      }
+    if (profiles.length > 0) {
+      dbSet('antigravity_profiles', profiles).catch(e => {
+        console.error('Save failed:', e)
+        if (e.name === 'QuotaExceededError') {
+          // IndexedDB rarely hits quota, but good to keep
+          alert('保存容量がいっぱいです。')
+        }
+      })
     }
   }, [profiles])
 
   useEffect(() => {
-    localStorage.setItem('antigravity_active_profile_id', activeProfileId)
+    dbSet('antigravity_active_profile_id', activeProfileId).catch(console.warn)
   }, [activeProfileId])
 
   useEffect(() => {
-    localStorage.setItem('antigravity_api_key', apiKey)
+    dbSet('antigravity_api_key', apiKey).catch(console.warn)
   }, [apiKey])
 
-  // --- STATE: OpenRouter ---
-  const [openRouterApiKey, setOpenRouterApiKey] = useState(() => localStorage.getItem('antigravity_openrouter_key') || '')
-  const [customOpenRouterModel, setCustomOpenRouterModel] = useState(() => localStorage.getItem('antigravity_custom_or_model') || '')
-
   useEffect(() => {
-    localStorage.setItem('antigravity_openrouter_key', openRouterApiKey)
+    dbSet('antigravity_openrouter_key', openRouterApiKey).catch(console.warn)
   }, [openRouterApiKey])
 
   useEffect(() => {
-    localStorage.setItem('antigravity_custom_or_model', customOpenRouterModel)
+    dbSet('antigravity_custom_or_model', customOpenRouterModel).catch(console.warn)
   }, [customOpenRouterModel])
+
+
+
+
+
+
 
 
 
@@ -1136,6 +1229,34 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     if (!window.confirm(`タグ「${tag}」を削除しますか？`)) return
     const newEmotions = { ...activeProfile.emotions }
     delete newEmotions[tag]
+
+    // デフォルト設定されていた場合クリア
+    if (activeProfile.defaultEmotion === tag) {
+      handleUpdateActiveProfile('defaultEmotion', null)
+    }
+
+    handleUpdateActiveProfile('emotions', newEmotions)
+  }
+
+  const handleRenameEmotionTag = (oldTag) => {
+    const newTag = prompt(`新しいタグ名を入力してください:`, oldTag)
+    if (!newTag || newTag === oldTag) return
+
+    const emotions = activeProfile.emotions || {}
+    if (emotions[newTag]) {
+      alert('その名前は既に使用されています。')
+      return
+    }
+
+    const newEmotions = { ...emotions }
+    newEmotions[newTag] = newEmotions[oldTag]
+    delete newEmotions[oldTag]
+
+    // デフォルト設定も更新
+    if (activeProfile.defaultEmotion === oldTag) {
+      handleUpdateActiveProfile('defaultEmotion', newTag)
+    }
+
     handleUpdateActiveProfile('emotions', newEmotions)
   }
 
@@ -1163,6 +1284,37 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     const newBackgrounds = { ...activeProfile.backgrounds }
     delete newBackgrounds[tag]
     handleUpdateActiveProfile('backgrounds', newBackgrounds)
+  }
+
+  // --- HANDLER: Single Emotion Upload with Naming ---
+  const handleAddEmotionWithFile = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    // デフォルト名をファイル名から取得
+    const defaultName = file.name.replace(/\.[^/.]+$/, "")
+
+    // 名前を入力させる
+    const tag = prompt('この表情の名前を入力してください:', defaultName)
+    if (!tag) {
+      e.target.value = '' // リセット
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      // 既存チェック
+      const currentEmotions = activeProfile.emotions || {}
+      if (currentEmotions[tag] && !window.confirm(`「${tag}」は既に存在します。上書きしますか？`)) {
+        e.target.value = ''
+        return
+      }
+
+      const newEmotions = { ...currentEmotions, [tag]: reader.result }
+      handleUpdateActiveProfile('emotions', newEmotions)
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
   }
 
   // --- HANDLER: Smart Asset Upload (Batch) ---
@@ -1269,12 +1421,13 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       endX = e.changedTouches[0].clientX
       endY = e.changedTouches[0].clientY
 
-      // スワイプ判定：30px以上動いたらスワイプ（閾値を下げた）
+      // スワイプ判定：15px以上動いたらスワイプ（さらに緩和）
       const deltaX = Math.abs(endX - touchStartPos.x)
       const deltaY = Math.abs(endY - touchStartPos.y)
       const timeDelta = Date.now() - touchStartPos.time
 
-      if ((deltaX > 30 || deltaY > 30) && timeDelta < 500) {
+      // 15px以上動くか、1秒以内に動きがあればスワイプ扱い
+      if ((deltaX > 15 || deltaY > 15) && timeDelta < 1000) {
         isSwipe = true
       }
     } else {
@@ -1319,6 +1472,31 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     }
     setMessages(prev => [...prev, touchMessage])
 
+    // タッチの種類と回数に応じて表情を変更（ファイル名ベース）
+    const emotionKeys = Object.keys(activeProfile?.emotions || {})
+    if (emotionKeys.length > 0) {
+      // 大文字小文字を無視してキーを検索するヘルパー
+      const findEmotionKey = (target) => {
+        return emotionKeys.find(key => key.toLowerCase() === target.toLowerCase())
+      }
+
+      // タップ（キス）とスワイプ（撫でる）で異なる表情マッピング
+      let targetIndex = 0
+
+      if (newCount >= 7) {
+        // エッチ段階
+        targetIndex = Math.min(emotionKeys.length - 1, 2)
+      } else if (newCount >= 4) {
+        // 甘い段階
+        targetIndex = Math.min(emotionKeys.length - 1, 1)
+      } else {
+        // 通常段階
+        targetIndex = 0
+      }
+
+      setCurrentEmotion(emotionKeys[targetIndex])
+    }
+
     // タッチ開始位置をリセット
     setTouchStartPos(null)
   }
@@ -1362,6 +1540,22 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       }
     }
     setMessages(prev => [...prev, touchMessage])
+
+    // タッチ回数に応じて表情を変更（ファイル名ベース・PCはタップ扱い）
+    const emotionKeys = Object.keys(activeProfile?.emotions || {})
+    if (emotionKeys.length > 0) {
+      let targetIndex = 0
+
+      if (newCount >= 7) {
+        targetIndex = Math.min(emotionKeys.length - 1, 2)
+      } else if (newCount >= 4) {
+        targetIndex = Math.min(emotionKeys.length - 1, 1)
+      } else {
+        targetIndex = 0
+      }
+
+      setCurrentEmotion(emotionKeys[targetIndex])
+    }
   }
 
 
@@ -1697,6 +1891,22 @@ ${finalSystemPrompt}`
     }
   }
 
+  if (isLoading) {
+    return (
+      <div style={{
+        position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+        backgroundColor: '#fce4ec', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', zIndex: 9999
+      }}>
+        <Loader className="animate-spin" size={48} color="#ec407a" />
+        <p style={{ marginTop: '20px', color: '#ad1457', fontWeight: 'bold' }}>
+          データを読み込んでいます...<br />
+          (初回は移行処理のため時間がかかる場合があります)
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className={`app-container ${uiMode === 'visual_novel' ? 'visual-novel' : ''}`}>
       {/* Header */}
@@ -1809,15 +2019,27 @@ ${finalSystemPrompt}`
             (activeProfile.defaultBackground ? bgMap[activeProfile.defaultBackground] : null) || // Priority Default
             (Object.values(bgMap).length > 0 ? Object.values(bgMap)[0] : null)
 
-          // Helper to resolve Character
+          // Helper to resolve Character (大文字小文字非依存)
           const emoMap = activeProfile.emotions || {}
-          const resolvedCharUrl = emoMap[currentEmotion] ||
-            emoMap['Normal'] ||
-            emoMap['Neutral'] ||
-            emoMap['default'] ||
-            (activeProfile.defaultEmotion ? emoMap[activeProfile.defaultEmotion] : null) || // Priority Default
-            (Object.values(emoMap).length > 0 ? Object.values(emoMap)[0] : null) ||
-            (activeProfile.iconImage || '')
+          const emoKeys = Object.keys(emoMap)
+          // ID直指定か、名前検索かで解決
+          let resolvedCharUrl = emoMap[currentEmotion]
+
+          if (!resolvedCharUrl) {
+            // 見つからない場合、名前で探してみる（大文字小文字無視）
+            const foundKey = emoKeys.find(k => k.toLowerCase() === String(currentEmotion).toLowerCase())
+            if (foundKey) resolvedCharUrl = emoMap[foundKey]
+          }
+
+          // それでもなければフォールバック
+          if (!resolvedCharUrl) {
+            const normalKey = emoKeys.find(k => k.toLowerCase() === 'normal')
+            resolvedCharUrl =
+              (normalKey ? emoMap[normalKey] : null) ||
+              (activeProfile.defaultEmotion ? emoMap[activeProfile.defaultEmotion] : null) ||
+              (emoKeys.length > 0 ? emoMap[emoKeys[0]] : null) ||
+              (activeProfile.iconImage || '')
+          }
 
           return (
             <div className="vn-stage" style={{
@@ -1844,8 +2066,8 @@ ${finalSystemPrompt}`
                 onTouchEnd={handleCharacterTouchEnd}
                 style={{
                   position: 'absolute',
-                  bottom: '10%', // Lowered by 5% (15->10)
-                  left: '55%',   // Shifted right (50->55)
+                  bottom: '35%',
+                  left: '50%',   // 中央に戻す
                   transform: 'translateX(-50%)',
                   height: '75dvh', // Use dvh for mobile stability
                   maxHeight: '75dvh',
@@ -1857,12 +2079,31 @@ ${finalSystemPrompt}`
                 }}
               />
               {/* Visual State Debug Labels */}
-              <div style={{ position: 'absolute', top: 65, right: 10, display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end', zIndex: 20 }}>
-                <div style={{ background: 'rgba(0,0,0,0.5)', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem' }}>
-                  Emotion: {currentEmotion || (emoMap[currentEmotion] ? 'Found' : 'Auto')}
-                </div>
-                <div style={{ background: 'rgba(0,0,0,0.5)', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem' }}>
-                  BG: {currentBackground || (resolvedBgUrl ? 'Auto' : 'None')}
+              <div style={{
+                position: 'absolute',
+                top: 60,
+                right: 10,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                alignItems: 'flex-end',
+                zIndex: 1000,
+                background: 'rgba(0,0,0,0.8)',
+                padding: '10px',
+                borderRadius: '8px',
+                maxWidth: '60%',
+                overflow: 'hidden',
+                fontSize: '0.7rem',
+                color: '#fff',
+                pointerEvents: 'none'
+              }}>
+                <div style={{ color: 'cyan', fontWeight: 'bold' }}>--- DEBUG ---</div>
+                <div>State: {currentEmotion}</div>
+                <div>Count: {touchCount}</div>
+                <div>Swiped: {touchStartPos ? 'Tracking...' : 'No'}</div>
+                <div>Img: {resolvedCharUrl ? 'OK' : 'MISSING'}</div>
+                <div style={{ fontSize: '0.6rem', opacity: 0.8, textAlign: 'right' }}>
+                  Keys: {emoKeys.join(', ')}
                 </div>
               </div>
             </div>
@@ -2512,14 +2753,14 @@ ${finalSystemPrompt}`
                           ファイル名がそのまま感情タグになります（例: `Joy.png` → `[Joy]`）。
                         </p>
 
-                        {/* Smart Upload Button */}
-                        <div style={{ marginBottom: '10px' }}>
+                        {/* Buttons Container */}
+                        <div style={{ marginBottom: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                           <label className="import-btn" style={{
                             display: 'inline-flex', alignItems: 'center', gap: '6px',
                             backgroundColor: '#fce4ec', border: '1px solid #f06292', color: '#880e4f',
                             padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold'
                           }}>
-                            <Upload size={16} /> インポート (複数画像を選択)
+                            <Upload size={16} /> インポート (複数)
                             <input
                               type="file"
                               multiple
@@ -2528,6 +2769,54 @@ ${finalSystemPrompt}`
                               style={{ display: 'none' }}
                             />
                           </label>
+
+                          <label className="import-btn" style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '6px',
+                            backgroundColor: '#fff', border: '1px solid #f06292', color: '#880e4f',
+                            padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold'
+                          }}>
+                            <Plus size={16} /> 個別追加 (名前指定)
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleAddEmotionWithFile}
+                              style={{ display: 'none' }}
+                            />
+                          </label>
+                        </div>
+
+                        {/* Quick Add Presets */}
+                        <div style={{ marginBottom: '10px', padding: '8px', backgroundColor: '#fff0f5', borderRadius: '4px' }}>
+                          <p style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#ad1457', marginBottom: '4px' }}>
+                            よく使う表情をボタンで追加（名前入力をスキップ）:
+                          </p>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {['normal', 'smile', 'blush', 'love', 'shy', 'aroused'].map(tag => (
+                              <button
+                                key={tag}
+                                onClick={() => handleQuickAdd(tag)}
+                                style={{
+                                  border: '1px solid #fbdce7',
+                                  backgroundColor: '#fff',
+                                  color: '#d81b60',
+                                  borderRadius: '12px',
+                                  padding: '4px 10px',
+                                  fontSize: '0.75rem',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                + {tag}
+                              </button>
+                            ))}
+                          </div>
+                          {/* Hidden Input for Quick Add */}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            ref={quickAddInputRef}
+                            style={{ display: 'none' }}
+                            onChange={handleQuickAddFileSelect}
+                          />
                         </div>
 
                         <div style={{
@@ -2576,6 +2865,13 @@ ${finalSystemPrompt}`
                                   {tag}
                                 </span>
                                 <div style={{ display: 'flex', gap: '2px' }}>
+                                  <button
+                                    onClick={() => handleRenameEmotionTag(tag)}
+                                    style={{ border: 'none', background: 'none', color: '#666', cursor: 'pointer', padding: '2px' }}
+                                    title="名前を変更"
+                                  >
+                                    <Edit2 size={12} />
+                                  </button>
                                   <button
                                     onClick={() => handleSetDefaultEmotion(tag)}
                                     style={{ border: 'none', background: 'none', color: activeProfile.defaultEmotion === tag ? '#ffb300' : '#e0e0e0', cursor: 'pointer', padding: '2px' }}
