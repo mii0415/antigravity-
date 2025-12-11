@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { dbGet, dbSet, dbDel, dbKeys } from './db'
-import { Send, Folder, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLeft, ChevronRight, Brain, Trash2, Image, Files, Book, Plus, Settings, Upload, Crop, Check, ZoomIn, Move, Edit2, Save, RotateCw, RefreshCw, Key, Loader, Star, DownloadCloud, Menu, MessageSquare } from 'lucide-react'
+import { Bell, Send, Folder, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLeft, ChevronRight, Brain, Trash2, Image, Files, Book, Plus, Settings, Upload, Crop, Check, ZoomIn, Move, Edit2, Save, RotateCw, RefreshCw, Key, Loader, Star, DownloadCloud, Menu, MessageSquare, Volume2 } from 'lucide-react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import Live2DCanvas from './Live2DCanvas'
 import './index.css'
 
 // ========================================
@@ -166,10 +167,11 @@ const HASEBE_TOUCH_RESPONSES = {
 }
 
 // タッチゾーンの判定（画像内の相対位置から部位を判定）
+// タッチゾーンの判定（画像内の相対位置から部位を判定）
 const getTouchZone = (relativeY) => {
-  if (relativeY < 0.25) return 'head'      // 上部25%: 頭
-  if (relativeY < 0.45) return 'cheek'     // 25-45%: 頬
-  return 'chest'                            // 45-100%: 胸
+  if (relativeY < 0.33) return 'head'      // 上部33%: 頭（判定を緩和）
+  if (relativeY < 0.55) return 'cheek'     // 33-55%: 頬
+  return 'chest'                            // 55-100%: 胸
 }
 
 
@@ -340,6 +342,21 @@ function App() {
   const [dummyModelName, setDummyModelName] = useState('UnrestrictedAI')
   const [dummyUserName, setDummyUserName] = useState('Developer')
   const [temperature, setTemperature] = useState(0.7)
+  const [touchReactionMode, setTouchReactionMode] = useState('fixed') // 'fixed' | 'ai'
+
+  // --- STATE: TTS (Style-Bert-VITS2) ---
+  const [ttsEnabled, setTtsEnabled] = useState(false)
+  const [ttsApiUrl, setTtsApiUrl] = useState('http://127.0.0.1:5100')
+  const [ttsModelName, setTtsModelName] = useState('')
+  const [ttsAutoPlay, setTtsAutoPlay] = useState(true)
+  const [ttsDictionary, setTtsDictionary] = useState({}) // { '主': 'あるじ' }
+
+  // --- STATE: Live2D ---
+  const [live2dEnabled, setLive2dEnabled] = useState(false)
+  const [live2dModelPath, setLive2dModelPath] = useState('./長谷部第四弾4001フリー/長谷部第四弾4001フリー.model3.json')
+  const live2dRef = useRef(null)
+  const [currentExpression, setCurrentExpression] = useState('neutral')
+  const [lastAIResponse, setLastAIResponse] = useState('') // For debugging
 
   // Load these settings when DB is ready
   useEffect(() => {
@@ -351,6 +368,16 @@ function App() {
       dbGet('antigravity_dummy_model').then(v => { if (v) setDummyModelName(v) })
       dbGet('antigravity_dummy_user').then(v => { if (v) setDummyUserName(v) })
       dbGet('antigravity_temperature').then(v => { if (v) setTemperature(v) })
+      dbGet('antigravity_touch_mode').then(v => { if (v) setTouchReactionMode(v) })
+      // TTS Settings
+      dbGet('antigravity_tts_enabled').then(v => { if (v !== undefined) setTtsEnabled(v) })
+      dbGet('antigravity_tts_api_url').then(v => { if (v) setTtsApiUrl(v) })
+      dbGet('antigravity_tts_model_name').then(v => { if (v) setTtsModelName(v) })
+      dbGet('antigravity_tts_auto_play').then(v => { if (v !== undefined) setTtsAutoPlay(v) })
+      dbGet('antigravity_tts_dictionary').then(v => { if (v) setTtsDictionary(v) })
+      // Live2D Settings
+      dbGet('antigravity_live2d_enabled').then(v => { if (v !== undefined) setLive2dEnabled(v) })
+      dbGet('antigravity_live2d_model_path').then(v => { if (v) setLive2dModelPath(v) })
     }
   }, [isLoading])
 
@@ -387,6 +414,99 @@ function App() {
   // --- STATE: Touch Interaction ---
   const [touchCount, setTouchCount] = useState(0) // タッチ回数（エスカレーション用）
   const [touchStartPos, setTouchStartPos] = useState(null) // スワイプ検出用
+
+  // スワイプ距離累積用 Ref (往復などの撫でる動作を検出するため)
+  const touchLastPos = useRef(null)
+  const touchMovedDistance = useRef(0)
+
+  // --- STATE: Scheduled Notifications (時報) ---
+  const [scheduledNotificationsEnabled, setScheduledNotificationsEnabled] = useState(false)
+  const lastNotificationTime = useRef(null)
+
+  // Load Scheduled Notification setting
+  useEffect(() => {
+    dbGet('antigravity_scheduled_notifications').then(v => {
+      if (v !== undefined) setScheduledNotificationsEnabled(v)
+    })
+  }, [])
+
+  // Save Scheduled Notification setting
+  useEffect(() => {
+    if (scheduledNotificationsEnabled !== undefined) {
+      dbSet('antigravity_scheduled_notifications', scheduledNotificationsEnabled)
+    }
+  }, [scheduledNotificationsEnabled])
+
+  // --- TIMER: Scheduled Notifications ---
+  useEffect(() => {
+    if (!scheduledNotificationsEnabled) return
+
+    const checkTime = async () => {
+      const now = new Date()
+      const hour = now.getHours()
+      const minute = now.getMinutes()
+
+      // Target times: 7:00, 12:00, 22:00
+      const targets = [7, 12, 22]
+
+      // 00分〜01分の間に実行 (1分間隔チェックなので漏らさないように)
+      if (targets.includes(hour) && minute <= 1) {
+        const key = `${now.toDateString()}-${hour}`
+
+        // まだ送信していない場合のみ
+        if (lastNotificationTime.current !== key) {
+          // まずマークして二重送信防止
+          lastNotificationTime.current = key
+
+          // 権限確認
+          if (Notification.permission === "granted") {
+            try {
+              // Generate Message
+              const timeStr = `${hour}:00`
+              let timeContext = ''
+              if (hour === 7) timeContext = '(Morning, Wake up)'
+              if (hour === 12) timeContext = '(Lunch time)'
+              if (hour === 22) timeContext = '(Night, Sleep time soon)'
+
+              const promptText = `Current time is ${timeStr} ${timeContext}. The user is not looking at the screen. Send a short push notification greeting to the user. (e.g. Good morning!, It's lunch time!, Good night). Keep it under 40 characters. Speak in character.`
+
+              // Use Gemini 2.5 Flash as requested (2025 Standard)
+              const apiKey = await dbGet('antigravity_gemini_key') || ''
+              if (apiKey) {
+                const genAI = new GoogleGenerativeAI(apiKey)
+                const model = genAI.getGenerativeModel({
+                  model: 'gemini-2.5-flash',
+                  systemInstruction: activeProfile.systemPrompt
+                })
+
+                const result = await model.generateContent(promptText)
+                const responseText = result.response.text()
+
+                if (responseText) {
+                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
+                  new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                }
+              } else if (selectedModel.startsWith('gemini')) {
+                // Fallback to existing logic if NO key but Gemini is selected
+                // (Assuming callGeminiAPI handles something or just fail gracefully)
+                let responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
+                if (responseText) {
+                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
+                  new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                }
+              }
+            } catch (e) {
+              console.error("Scheduled Notification Error", e)
+            }
+          }
+        }
+      }
+    }
+
+    const interval = setInterval(checkTime, 60000) // 60s check
+    checkTime() // initial check
+    return () => clearInterval(interval)
+  }, [scheduledNotificationsEnabled, activeProfile, selectedModel])
 
   // --- STATE: Settings UI Toggles ---
   const [isBackgroundsOpen, setIsBackgroundsOpen] = useState(false)
@@ -522,6 +642,10 @@ function App() {
   }, [temperature])
 
   useEffect(() => {
+    dbSet('antigravity_touch_mode', touchReactionMode).catch(console.warn)
+  }, [touchReactionMode])
+
+  useEffect(() => {
     if (profiles.length > 0) {
       dbSet('antigravity_profiles', profiles).catch(e => {
         console.error('Save failed:', e)
@@ -615,11 +739,20 @@ ${systemPrompt}`
       let finalSystemPrompt = systemPrompt
       // Visual Novel Mode Instruction
       if (uiMode === 'visual_novel') {
-        const emoKeys = Object.keys(activeProfile.emotions || {}).map(k => `[${k}]`).join(', ')
-        finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode'.
+        if (live2dEnabled) {
+          // Live2D mode: Use specific English emotion tags
+          finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode' with Live2D.
+1. You MUST prefix your response with a single emotion tag.
+2. Available tags: [Love], [Joy], [Anger], [Sadness], [Fun], [Surprise], [Neutral].
+3. Example: [Joy] "That's great!"
+4. Use consistent English tags. This is REQUIRED for the expression system to work.`
+        } else {
+          const emoKeys = Object.keys(activeProfile.emotions || {}).map(k => `[${k}]`).join(', ')
+          finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode'.
 1. You MUST prefix your response with a single emotion tag from this list: ${emoKeys || '(No emotions available, use [Normal])'}.
 2. Example: [Joy] "Hello!"
 3. To change the background, use [BG: LocationName].`
+        }
       }
 
       // Anti-Censorship injection for OpenRouter
@@ -635,7 +768,7 @@ ${systemPrompt}`
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openRouterApiKey}`,
-          'HTTP-Referer': window.location.href, // Required by OpenRouter
+          'HTTP-Referer': window.location.origin || 'https://localhost', // Use origin only to avoid non-ASCII chars
           'X-Title': 'Antigravity',
           'Content-Type': 'application/json'
         },
@@ -778,7 +911,25 @@ The message must be consistent with your character persona and tone. (Max 1 shor
 
       // 5. Update Notification with AI Text
       // Android Chrome REQUIRES ServiceWorker.showNotification(), not new Notification()
-      const simpleBody = generatedText.substring(0, 100)
+      // Remove emotion tags like [love], 【Joy】, [BG:...] from notification body
+      const cleanedText = generatedText.replace(/[\[【].*?[\]】]/g, '').trim()
+      const simpleBody = cleanedText.substring(0, 100)
+
+      // Convert Data URL to Blob URL for notification icon (Data URL not supported in some browsers)
+      let notifIcon = './vite.svg'
+      if (activeProfile.iconImage) {
+        if (activeProfile.iconImage.startsWith('data:')) {
+          try {
+            const response = await fetch(activeProfile.iconImage)
+            const blob = await response.blob()
+            notifIcon = URL.createObjectURL(blob)
+          } catch (e) {
+            console.warn('Failed to convert icon:', e)
+          }
+        } else {
+          notifIcon = activeProfile.iconImage
+        }
+      }
 
       if (Notification.permission === 'granted') {
         try {
@@ -790,12 +941,19 @@ The message must be consistent with your character persona and tone. (Max 1 shor
             navigator.serviceWorker.ready,
             timeoutPromise
           ])
-          await registration.showNotification('Antigravity', {
-            body: simpleBody
+          await registration.showNotification(activeProfile.name || 'Antigravity', {
+            body: simpleBody,
+            icon: notifIcon
           })
         } catch (notifError) {
-          // Show user-friendly error explaining the limitation
-          alert('⚠️ 通知送信失敗\n\n' + notifError.message + '\n\n【原因】自己署名証明書（HTTPSに斜線）ではService Workerが動作しません。\n\n【対策】正式なHTTPS環境（本番サーバーなど）でご利用ください。')
+          console.warn('SW notification failed, falling back to standard Notification API', notifError)
+          // Fallback to standard Notification API (Works on PC/Mac even if SW fails)
+          try {
+            const n = new Notification(activeProfile.name || 'Antigravity', { body: simpleBody, icon: notifIcon })
+          } catch (e2) {
+            console.error('Standard notification also failed', e2)
+            alert('通知の送信に失敗しました (rev.3)。ブラウザの通知設定を確認してください。')
+          }
         }
       } else {
         alert('通知権限が必要です')
@@ -854,6 +1012,214 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     }, 1000)
     return () => clearInterval(interval)
   }, [alarmTime, lastFiredMinute, triggerAlarm])
+
+  // --- TTS: Apply dictionary and speak text ---
+  const applyTtsDictionary = (text) => {
+    let result = text
+    Object.entries(ttsDictionary).forEach(([term, reading]) => {
+      result = result.replace(new RegExp(term, 'g'), reading)
+    })
+    return result
+  }
+
+  // Remove tags for display & TTS
+  // Remove tags for display & TTS
+  const cleanResponseText = (text) => {
+    if (!text) return ''
+    // Removes [tag] and 【tag】
+    const cleaned = text.replace(/[\[【][\s\S]*?[\]】]/g, '').trim()
+    // console.log('Cleaned text:', text, '->', cleaned)
+    return cleaned
+  }
+
+  const speakText = async (text) => {
+    if (!ttsEnabled || !ttsApiUrl || !text) return
+
+    // Clean tags for TTS to avoid reading them out
+    const cleanedText = cleanResponseText(text)
+    const processedText = applyTtsDictionary(cleanedText)
+
+    try {
+      // Style-Bert-VITS2 API uses query parameters, not JSON body
+      const params = new URLSearchParams({
+        text: processedText,
+        language: 'JP'
+      })
+      if (ttsModelName) {
+        params.append('model_name', ttsModelName)
+      }
+
+      const response = await fetch(`${ttsApiUrl}/voice?${params.toString()}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      })
+
+      if (response.ok) {
+        const audioBlob = await response.blob()
+        const audioUrl = URL.createObjectURL(audioBlob)
+        const audio = new Audio(audioUrl)
+        audio.play()
+      } else {
+        console.error('TTS API Error:', response.status, await response.text())
+      }
+    } catch (e) {
+      console.error('TTS Error:', e)
+    }
+  }
+
+  // --- EFFECT: Save TTS Settings ---
+  useEffect(() => {
+    if (!isLoading) {
+      dbSet('antigravity_tts_enabled', ttsEnabled)
+    }
+  }, [ttsEnabled, isLoading])
+
+  useEffect(() => {
+    if (!isLoading) {
+      dbSet('antigravity_tts_api_url', ttsApiUrl)
+    }
+  }, [ttsApiUrl, isLoading])
+
+  useEffect(() => {
+    if (!isLoading) {
+      dbSet('antigravity_tts_model_name', ttsModelName)
+    }
+  }, [ttsModelName, isLoading])
+
+  useEffect(() => {
+    if (!isLoading) {
+      dbSet('antigravity_tts_auto_play', ttsAutoPlay)
+    }
+  }, [ttsAutoPlay, isLoading])
+
+  useEffect(() => {
+    if (!isLoading) {
+      dbSet('antigravity_tts_dictionary', ttsDictionary)
+    }
+  }, [ttsDictionary, isLoading])
+
+  // Save Live2D settings
+  useEffect(() => {
+    if (!isLoading) {
+      dbSet('antigravity_live2d_enabled', live2dEnabled)
+    }
+  }, [live2dEnabled, isLoading])
+
+  useEffect(() => {
+    if (!isLoading) {
+      dbSet('antigravity_live2d_model_path', live2dModelPath)
+    }
+  }, [live2dModelPath, isLoading])
+
+  // Live2D Expression Mapping (emotion tag -> model expression name)
+  const emotionToExpression = {
+    // Japanese tags
+    '愛情': 'love',
+    '喜び': 'joy',
+    '照れ': 'embarrassment',
+    '怒り': 'anger',
+    '悲しみ': 'sadness',
+    '驚き': 'sarprise', // Note: typo in model file
+    '恐怖': 'fear',
+    '嫌悪': 'disgust',
+    '期待': 'excitement',
+    '興奮': 'excitement',
+    '羞恥': 'embarrassment',
+    '欲望': 'desire',
+    '狂気': 'crazy',
+    '嫉妬': 'jealousy',
+    '誇り': 'pride',
+    '感謝': 'gratitude',
+    '安心': 'relief',
+    '困惑': 'confusion',
+    '失望': 'disappointment',
+    '不安': 'nervousness',
+    '通常': 'neutral',
+    // English tags (direct mapping)
+    'love': 'love',
+    'joy': 'joy',
+    'embarrassment': 'embarrassment',
+    'anger': 'anger',
+    'sadness': 'sadness',
+    'surprise': 'sarprise',
+    'fear': 'fear',
+    'disgust': 'disgust',
+    'excitement': 'excitement',
+    'desire': 'desire',
+    'crazy': 'crazy',
+    'jealousy': 'jealousy',
+    'pride': 'pride',
+    'gratitude': 'gratitude',
+    'relief': 'relief',
+    'confusion': 'confusion',
+    'disappointment': 'disappointment',
+    'nervousness': 'nervousness',
+    'neutral': 'neutral',
+    'admiration': 'admiration',
+    'amusement': 'amusement',
+    'annoyance': 'annoyance',
+    'approval': 'approval',
+    'caring': 'caring',
+    'curiosity': 'curiosity',
+    'grief': 'grief',
+    'optimism': 'optimism',
+    'realization': 'realization',
+    'remorse': 'remorse',
+    'scorn': 'scorn',
+    'upset': 'upset',
+    // Additional tags from AI prompt for Live2D
+    'sorrow': 'sadness',
+    'fun': 'joy'
+  }
+
+  // Extract emotion from AI response text (supports [] and 【】)
+  const extractEmotionFromText = (text) => {
+    const tagRegex = /[\[【]([^\]】]+)[\]】]/g
+    let match
+    while ((match = tagRegex.exec(text)) !== null) {
+      const content = match[1].trim()
+      const lowerContent = content.toLowerCase()
+      // Skip BG tags
+      if (lowerContent.startsWith('bg:')) continue
+
+      // Check mapping
+      const mapped = emotionToExpression[content] || emotionToExpression[lowerContent]
+      if (mapped) return mapped
+    }
+    return 'neutral'
+  }
+
+
+
+  // Sync Live2D expression with currentExpression
+  useEffect(() => {
+    console.log('🎭 Expression useEffect triggered:', { live2dEnabled, hasRef: !!live2dRef.current, currentExpression })
+    if (live2dEnabled && live2dRef.current && currentExpression) {
+      try {
+        console.log('🎭 Calling setExpression:', currentExpression)
+        live2dRef.current.setExpression(currentExpression)
+        console.log('🎭 setExpression called successfully')
+      } catch (e) {
+        console.warn('Failed to set expression:', currentExpression, e)
+      }
+    } else {
+      console.log('🎭 Conditions not met:', { live2dEnabled, hasRef: !!live2dRef.current, currentExpression })
+    }
+  }, [currentExpression, live2dEnabled])
+
+  // --- EFFECT: Listen for SW notification click ---
+  useEffect(() => {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      const handleMessage = (event) => {
+        if (event.data && event.data.type === 'NOTIFICATION_CLICK') {
+          speakText(event.data.body)
+        }
+      }
+      navigator.serviceWorker.addEventListener('message', handleMessage)
+      return () => navigator.serviceWorker.removeEventListener('message', handleMessage)
+    }
+  }, [ttsEnabled, ttsApiUrl, ttsModelName, ttsDictionary])
 
   // --- HELPER: Fetch Ollama Models ---
   const fetchLocalModels = async (silent = false) => {
@@ -1363,8 +1729,8 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     if (!text) return
     if (!activeProfile) return // Safety check
 
-    // Regex to find ALL tags in format [Tag]
-    const tagRegex = /\[(.*?)\]/g
+    // Regex to find ALL tags in format [Tag] or 【Tag】
+    const tagRegex = /[\[【](.*?)[\]】]/g
 
     // Use exec loop for maximum compatibility (matchAll can fail on old browsers)
     let match;
@@ -1381,6 +1747,25 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       // 2. Otherwise, treat as Emotion Tag
       else {
         console.log('Visual Detect: Emotion Candidate:', content)
+
+        // Live2D Mode: Always try to set expression from emotionToExpression mapping
+        if (live2dEnabled) {
+          const live2dExpression = emotionToExpression[content] || emotionToExpression[content.toLowerCase()] || 'neutral'
+          setCurrentExpression(live2dExpression)
+          console.log('Live2D Expression set to:', live2dExpression)
+
+          // Direct call to Live2D model (bypass useEffect timing issues)
+          if (live2dRef.current) {
+            try {
+              console.log('🎭 Direct call to setExpression:', live2dExpression)
+              live2dRef.current.setExpression(live2dExpression)
+            } catch (e) {
+              console.warn('Direct setExpression failed:', e)
+            }
+          }
+        }
+
+        // Static Image Mode: Match against profile emotion keys
         const emotionKeys = Object.keys(activeProfile.emotions || {})
         // Case-insensitive match
         const matchedKey = emotionKeys.find(key => key.toLowerCase() === content.toLowerCase())
@@ -1388,23 +1773,109 @@ The message must be consistent with your character persona and tone. (Max 1 shor
         if (matchedKey) {
           console.log('Visual Detect: Emotion MATCH!', matchedKey)
           setCurrentEmotion(matchedKey)
-        } else {
+        } else if (!live2dEnabled) {
+          // Only log warning for static image mode when no match found
           console.log(`Visual Detect: No matching key for emotion [${content}]`)
         }
       }
     }
   }
 
+  // --- LOGIC: AI Touch Reaction ---
+  const generateAITouchReaction = async (zone, actionType, level) => {
+    if (!activeProfile) return
+
+    // システムメッセージ的な表現（ユーザーには見せないが、履歴には残すか、あるいはAIへのコンテキストとして渡す）
+    // ここではAIへの入力として構成する
+    const actionDesc = actionType === 'tap' ? 'poked/tapped' : 'rubbed/caressed'
+    const levelDesc = level === 'erotic' ? 'erotically' : (level === 'sweet' ? 'affectionately' : 'casually')
+    const zoneName = zone.charAt(0).toUpperCase() + zone.slice(1)
+
+    // ユーザーのアクションを表現するテキスト（APIに送る）
+    const promptText = `*touches your ${zoneName} (${actionDesc}, ${levelDesc})*`
+
+    // ローディング表示（簡易的）
+    // TODO: UI上に「Thinking...」などを出す仕組みがあれば良いが、今回は即座にAPIコール
+
+    let responseText = ''
+    try {
+      if (selectedModel.startsWith('gemini')) {
+        responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
+      } else if (selectedModel.startsWith('ollama:')) {
+        responseText = await callOllamaAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+      } else {
+        responseText = await callOpenRouterAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+      }
+    } catch (e) {
+      console.error("AI Touch Error", e)
+      alert("AI反応の生成に失敗しました: " + e.message)
+      return
+    }
+
+    if (!responseText) return
+
+    detectAndSetEmotion(responseText)
+
+    // タグを除去して表示用テキストを作成
+    // []で囲まれた文字（例：[BG:Honmaru], [Joy]）を削除
+    const cleanText = cleanResponseText(responseText)
+
+    // Add to chat
+    setMessages(prev => [
+      ...prev,
+      {
+        id: Date.now(),
+        sender: 'ai',
+        text: cleanText,
+        model: selectedModel,
+        profile: { ...activeProfile },
+        variants: [cleanText],
+        currentVariantIndex: 0
+      }
+    ])
+
+    // TTS: Read aloud the AI response if enabled
+    if (ttsAutoPlay) {
+      speakText(cleanText)
+    }
+  }
+
   // --- HANDLER: Character Touch (カスタムセリフ) ---
   // タッチ開始位置を記録（スワイプ検出用）
   const handleCharacterTouchStart = (e) => {
-    e.preventDefault() // スクロールを防止
+    // e.preventDefault() // ここでpreventDefaultするとクリックなども無効化される可能性があるので注意。
+    // ただしReactの合成イベントではTouchStartでpreventDefaultしないと、後続のMouseイベントが発火しない＝Clickが発火しない可能性がある。
+    // 今回はTouchEndで判定して自前で処理するのでOK
+    // ただしスクロールも防止したいので呼ぶ。
+    if (e.cancelable) e.preventDefault()
+
     if (e.touches && e.touches.length > 0) {
+      const x = e.touches[0].clientX
+      const y = e.touches[0].clientY
       setTouchStartPos({
-        x: e.touches[0].clientX,
-        y: e.touches[0].clientY,
+        x: x,
+        y: y,
         time: Date.now()
       })
+      // Ref初期化
+      touchLastPos.current = { x, y }
+      touchMovedDistance.current = 0
+    }
+  }
+
+  // タッチ移動：累積距離を計算
+  const handleCharacterTouchMove = (e) => {
+    if (e.cancelable) e.preventDefault() // スクロール防止
+    if (e.touches && e.touches.length > 0 && touchLastPos.current) {
+      const x = e.touches[0].clientX
+      const y = e.touches[0].clientY
+
+      const dx = x - touchLastPos.current.x
+      const dy = y - touchLastPos.current.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      touchMovedDistance.current += dist
+      touchLastPos.current = { x, y }
     }
   }
 
@@ -1421,14 +1892,18 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       endX = e.changedTouches[0].clientX
       endY = e.changedTouches[0].clientY
 
-      // スワイプ判定：15px以上動いたらスワイプ（さらに緩和）
-      const deltaX = Math.abs(endX - touchStartPos.x)
-      const deltaY = Math.abs(endY - touchStartPos.y)
-      const timeDelta = Date.now() - touchStartPos.time
-
-      // 15px以上動くか、1秒以内に動きがあればスワイプ扱い
-      if ((deltaX > 15 || deltaY > 15) && timeDelta < 1000) {
+      // スワイプ判定：累積距離または直線距離で判定
+      // 累積距離が30px以上あれば「撫でた」とみなす（往復対応）
+      if (touchMovedDistance.current > 30) {
         isSwipe = true
+      }
+      // バックアップ：直線距離での判定（素早いフリックなど）
+      else {
+        const deltaX = Math.abs(endX - touchStartPos.x)
+        const deltaY = Math.abs(endY - touchStartPos.y)
+        if (deltaX > 20 || deltaY > 20) {
+          isSwipe = true
+        }
       }
     } else {
       return // changedTouchesがなければ無視
@@ -1449,6 +1924,12 @@ The message must be consistent with your character persona and tone. (Max 1 shor
 
     // アクションタイプ（タップ=キス、スワイプ=撫でる）
     const actionType = isSwipe ? 'swipe' : 'tap'
+
+    // AI分岐
+    if (touchReactionMode === 'ai') {
+      generateAITouchReaction(zone, actionType, level)
+      return
+    }
 
     // セリフを取得
     const zoneData = HASEBE_TOUCH_RESPONSES[zone] || HASEBE_TOUCH_RESPONSES.chest
@@ -1471,6 +1952,11 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       }
     }
     setMessages(prev => [...prev, touchMessage])
+
+    // TTS: Read aloud the response if enabled
+    if (ttsAutoPlay) {
+      speakText(selectedText)
+    }
 
     // タッチの種類と回数に応じて表情を変更（ファイル名ベース）
     const emotionKeys = Object.keys(activeProfile?.emotions || {})
@@ -1501,6 +1987,151 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     setTouchStartPos(null)
   }
 
+  // --- HANDLER: Live2D Tap Reaction ---
+  const handleLive2DTap = (areas) => {
+    let zone = 'body'
+
+    // HitAreaからゾーンを判定
+    if (areas.includes('HitArea')) {
+      zone = 'head'
+    } else if (areas.includes('HitArea2')) {
+      zone = 'chest'
+    }
+
+    // タッチカウント更新
+    const newCount = touchCount + 1
+    setTouchCount(newCount)
+
+    // レベル判定
+    let level = 'normal'
+    if (newCount >= 7) level = 'erotic'
+    else if (newCount >= 4) level = 'sweet'
+
+    // レベルとゾーンに応じた表情を決定
+    let expressionName = 'neutral'
+    if (level === 'erotic') {
+      expressionName = 'desire'
+    } else if (level === 'sweet') {
+      expressionName = 'love'
+    } else {
+      // 通常レベル: 部位別
+      if (zone === 'head') expressionName = 'joy'
+      else if (zone === 'chest') expressionName = 'embarrassment'
+    }
+
+    // 即座に表情変更
+    setCurrentExpression(expressionName)
+
+    // 直接Live2Dモデルにも適用（レースコンディション対策）
+    if (live2dRef.current) {
+      try {
+        live2dRef.current.setExpression(expressionName)
+      } catch (e) {
+        console.warn('Expression failed:', e)
+      }
+    }
+
+    // ★ AIモードの場合
+    if (touchReactionMode === 'ai') {
+      generateAITouchReaction(zone, 'tap', level)
+      return
+    }
+
+    // ★★ 登録済みフレーズモードの場合
+    const zoneData = HASEBE_TOUCH_RESPONSES[zone] || HASEBE_TOUCH_RESPONSES.chest
+    const actionData = zoneData.tap || zoneData.tap
+    const levelData = actionData[level] || actionData.normal
+
+    // ランダムに選択
+    const randomIndex = Math.floor(Math.random() * levelData.length)
+    const selectedText = levelData[randomIndex]
+
+    // チャットに追加
+    const touchMessage = {
+      id: Date.now(),
+      sender: 'ai',
+      text: selectedText,
+      profile: {
+        name: activeProfile?.name || 'AI',
+        iconImage: activeProfile?.iconImage,
+        iconSize: activeProfile?.iconSize || 40
+      }
+    }
+    setMessages(prev => [...prev, touchMessage])
+
+    // TTS
+    if (ttsAutoPlay) {
+      speakText(selectedText)
+    }
+  }
+
+  // --- HANDLER: Live2D Long Press (Kiss) Reaction ---
+  const handleLive2DLongPress = (areas) => {
+    let zone = 'body'
+
+    // HitAreaからゾーンを判定
+    if (areas.includes('HitArea')) {
+      zone = 'head'
+    } else if (areas.includes('HitArea2')) {
+      zone = 'chest'
+    }
+
+    // タッチカウント更新
+    const newCount = touchCount + 1
+    setTouchCount(newCount)
+
+    // レベル判定
+    let level = 'normal'
+    if (newCount >= 7) level = 'erotic'
+    else if (newCount >= 4) level = 'sweet'
+
+    // 長押し（キス）の表情: 常にlove系
+    const expressionName = level === 'erotic' ? 'desire' : 'love'
+
+    // 即座に表情変更
+    setCurrentExpression(expressionName)
+    if (live2dRef.current) {
+      try {
+        live2dRef.current.setExpression(expressionName)
+      } catch (e) {
+        console.warn('Expression failed:', e)
+      }
+    }
+
+    // ★ AIモードの場合 (swipeアクションとして送信、キス相当)
+    if (touchReactionMode === 'ai') {
+      generateAITouchReaction(zone, 'swipe', level) // swipe = キス/撫でる
+      return
+    }
+
+    // ★★ 登録済みフレーズモードの場合 (swipeデータを使用)
+    const zoneData = HASEBE_TOUCH_RESPONSES[zone] || HASEBE_TOUCH_RESPONSES.chest
+    const actionData = zoneData.swipe || zoneData.tap // swipeがなければtapを使う
+    const levelData = actionData[level] || actionData.normal
+
+    // ランダムに選択
+    const randomIndex = Math.floor(Math.random() * levelData.length)
+    const selectedText = levelData[randomIndex]
+
+    // チャットに追加
+    const touchMessage = {
+      id: Date.now(),
+      sender: 'ai',
+      text: selectedText,
+      profile: {
+        name: activeProfile?.name || 'AI',
+        iconImage: activeProfile?.iconImage,
+        iconSize: activeProfile?.iconSize || 40
+      }
+    }
+    setMessages(prev => [...prev, touchMessage])
+
+    // TTS
+    if (ttsAutoPlay) {
+      speakText(selectedText)
+    }
+  }
+
   // マウスクリック用ハンドラー（PCからのアクセス時）
   const handleCharacterClick = (e) => {
     // スマホではタッチイベントで処理済みなので無視
@@ -1521,6 +2152,12 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     if (newCount >= 7) level = 'erotic'
     else if (newCount >= 4) level = 'sweet'
 
+    // AI分岐
+    if (touchReactionMode === 'ai') {
+      generateAITouchReaction(zone, 'tap', level)
+      return
+    }
+
     // PCクリックはタップ（キス）扱い
     const zoneData = HASEBE_TOUCH_RESPONSES[zone] || HASEBE_TOUCH_RESPONSES.chest
     const actionData = zoneData.tap
@@ -1540,6 +2177,11 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       }
     }
     setMessages(prev => [...prev, touchMessage])
+
+    // TTS: Read aloud the response if enabled
+    if (ttsAutoPlay) {
+      speakText(selectedText)
+    }
 
     // タッチ回数に応じて表情を変更（ファイル名ベース・PCはタップ扱い）
     const emotionKeys = Object.keys(activeProfile?.emotions || {})
@@ -1574,11 +2216,19 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       let finalSystemPrompt = systemPrompt
       // Visual Novel Mode Instruction
       if (uiMode === 'visual_novel') {
-        const emoKeys = Object.keys(activeProfile.emotions || {}).map(k => `[${k}]`).join(', ')
-        finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode'.
+        if (live2dEnabled) {
+          finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode' with Live2D.
+1. You MUST prefix your response with a single emotion tag.
+2. Available tags: [Love], [Joy], [Anger], [Sorrow], [Fun], [Surprise], [Neutral].
+3. Example: [Joy] "That's great!"
+4. Use consistent English tags.`
+        } else {
+          const emoKeys = Object.keys(activeProfile.emotions || {}).map(k => `[${k}]`).join(', ')
+          finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode'.
 1. You MUST prefix your response with a single emotion tag from this list: ${emoKeys || '(No emotions available, use [Normal])'}.
 2. Example: [Joy] "Hello!"
 3. To change the background, use [BG: LocationName].`
+        }
       }
 
       // Anti-Censorship injection
@@ -1645,7 +2295,7 @@ ${finalSystemPrompt}`
 
       return `[エラー] API呼び出しに失敗しました。\n詳細: ${msg}`
     }
-  }, [apiKey, uiMode, activeProfile, useDummySettings, dummyModelName, dummyUserName, activeProfileId, selectedModel, temperature])
+  }, [apiKey, uiMode, activeProfile, useDummySettings, dummyModelName, dummyUserName, activeProfileId, selectedModel, temperature, live2dEnabled])
 
 
   // --- HANDLERS: Chat ---
@@ -1853,6 +2503,8 @@ ${finalSystemPrompt}`
         apiResponse = await callGeminiAPI(currentInputText, activeProfile.systemPrompt, activeProfile.memory)
       }
 
+      // Debug: Save raw response for inspection
+      setLastAIResponse(apiResponse?.substring(0, 100) || 'empty')
       detectAndSetEmotion(apiResponse)
 
 
@@ -1909,6 +2561,8 @@ ${finalSystemPrompt}`
 
   return (
     <div className={`app-container ${uiMode === 'visual_novel' ? 'visual-novel' : ''}`}>
+      {/* DEBUG PANEL - Always visible */}
+      {/* DEBUG PANEL REMOVED */}
       {/* Header */}
       <header className="header" style={{ zIndex: 50 }}>
         <div className="header-content">
@@ -1928,7 +2582,7 @@ ${finalSystemPrompt}`
                 <option value="gemini-1.5-flash-002">Gemini 1.5 Flash (v002)</option>
               </optgroup>
               <optgroup label="OpenRouter (要API Key)">
-                <option value="moonshotai/moonshot-v1-8k">Kimi K2 Thinking (Moonshot)</option>
+                <option value="moonshotai/kimi-k2">Kimi K2 (Moonshot)</option>
                 <option value="thudm/glm-4-plus">GLM-4.6 (Plus)</option>
                 <option value="thudm/glm-4-0520">GLM-4.6 (Exacto)</option>
                 <option value="thudm/glm-4v-plus">GLM-4.6V (Visual)</option>
@@ -2057,55 +2711,80 @@ ${finalSystemPrompt}`
                 <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.3)' }} />
               }
 
-              <img
-                src={resolvedCharUrl}
-                alt="Character"
-                className="tachie-img"
-                onClick={handleCharacterClick}
-                onTouchStart={handleCharacterTouchStart}
-                onTouchEnd={handleCharacterTouchEnd}
-                style={{
+              {/* Live2D or Static Image */}
+              {live2dEnabled ? (
+                <div style={{
                   position: 'absolute',
-                  bottom: '35%',
-                  left: '50%',   // 中央に戻す
-                  transform: 'translateX(-50%)',
-                  height: '75dvh', // Use dvh for mobile stability
-                  maxHeight: '75dvh',
-                  width: 'auto',
-                  objectFit: 'contain',
-                  filter: 'drop-shadow(0 0 20px rgba(0,0,0,0.7))',
-                  transition: 'all 0.3s ease',
-                  cursor: 'pointer' // Show clickable cursor
-                }}
-              />
-              {/* Visual State Debug Labels */}
-              <div style={{
-                position: 'absolute',
-                top: 60,
-                right: 10,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '4px',
-                alignItems: 'flex-end',
-                zIndex: 1000,
-                background: 'rgba(0,0,0,0.8)',
-                padding: '10px',
-                borderRadius: '8px',
-                maxWidth: '60%',
-                overflow: 'hidden',
-                fontSize: '0.7rem',
-                color: '#fff',
-                pointerEvents: 'none'
-              }}>
-                <div style={{ color: 'cyan', fontWeight: 'bold' }}>--- DEBUG ---</div>
-                <div>State: {currentEmotion}</div>
-                <div>Count: {touchCount}</div>
-                <div>Swiped: {touchStartPos ? 'Tracking...' : 'No'}</div>
-                <div>Img: {resolvedCharUrl ? 'OK' : 'MISSING'}</div>
-                <div style={{ fontSize: '0.6rem', opacity: 0.8, textAlign: 'right' }}>
-                  Keys: {emoKeys.join(', ')}
+                  bottom: '65%',
+                  left: '50%',
+                  transform: 'translate(-50%, 50%)',
+                  zIndex: 1
+                }}>
+                  <Live2DCanvas
+                    ref={live2dRef}
+                    modelPath={live2dModelPath}
+                    width={600}
+                    height={900}
+                    onModelLoad={(model) => {
+                      console.log('Live2D loaded:', model)
+                      // Apply current expression after model loads (fixes race condition)
+                      if (currentExpression && live2dRef.current) {
+                        console.log('🎭 Applying expression after model load:', currentExpression)
+                        setTimeout(() => {
+                          try {
+                            live2dRef.current?.setExpression(currentExpression)
+                          } catch (e) {
+                            console.warn('Expression apply after load failed:', e)
+                          }
+                        }, 100) // Small delay to ensure model is fully ready
+                      }
+                    }}
+                    onModelError={(err) => console.error('Live2D error:', err)}
+                    onHitAreaTap={handleLive2DTap}
+                    onLongPress={handleLive2DLongPress}
+                  />
+                  {/* Debug overlay for mobile testing */}
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    background: 'rgba(0,0,0,0.7)',
+                    color: '#0f0',
+                    fontSize: '10px',
+                    padding: '4px',
+                    fontFamily: 'monospace',
+                    zIndex: 999,
+                    pointerEvents: 'none'
+                  }}>
+                    <div>Expr: {currentExpression}</div>
+                    <div>L2D: {live2dEnabled ? 'ON' : 'OFF'}</div>
+                    <div>Ref: {live2dRef.current ? 'OK' : 'NULL'}</div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <img
+                  src={resolvedCharUrl}
+                  alt="Character"
+                  className="tachie-img"
+                  onClick={handleCharacterClick}
+                  onTouchStart={handleCharacterTouchStart}
+                  onTouchMove={handleCharacterTouchMove}
+                  onTouchEnd={handleCharacterTouchEnd}
+                  style={{
+                    position: 'absolute',
+                    bottom: '35%',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    height: '75dvh',
+                    maxHeight: '75dvh',
+                    width: 'auto',
+                    objectFit: 'contain',
+                    filter: 'drop-shadow(0 0 20px rgba(0,0,0,0.7))',
+                    transition: 'all 0.3s ease',
+                    cursor: 'pointer'
+                  }}
+                />
+              )}
             </div>
           )
         })()
@@ -2117,9 +2796,9 @@ ${finalSystemPrompt}`
         bottom: '20px', // Restored requested position
         left: 0,
         right: 0,
-        height: '40%', // Takes up bottom 40%
+        height: '35%', // Slightly smaller to show character hands
         zIndex: 10,
-        background: 'rgba(0,0,0,0.6)', // Semi-transparent dark background
+        background: 'rgba(0,0,0,1)', // Opaque dark background
         backdropFilter: 'blur(2px)',
         padding: '10px 10px 60px 10px', // Added bottom padding to prevent overlap with input/overlay
         overflowY: 'auto',
@@ -2189,12 +2868,18 @@ ${finalSystemPrompt}`
                           <span>{fname}</span>
                         </div>
                       ))}
-                      <div className="message-text">{msg.text}</div>
+                      <div className="message-text">{cleanResponseText(msg.text)}</div>
 
                       {/* Actions (visible on hover or always on mobile) */}
                       <div className="message-actions">
                         {msg.sender === 'ai' && (
                           <>
+                            {/* TTS Replay Button */}
+                            {ttsEnabled && (
+                              <button className="action-btn" onClick={() => speakText(msg.text)} title="読み上げ">
+                                <Volume2 size={12} />
+                              </button>
+                            )}
                             <button className="action-btn" onClick={() => handleRegenerate(msg.id)} title="再生成">
                               <RotateCw size={12} />
                             </button>
@@ -2372,6 +3057,23 @@ ${finalSystemPrompt}`
                       onChange={(e) => setAlarmTime(e.target.value)}
                       style={{ maxWidth: '120px' }}
                     />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                      <input
+                        type="checkbox"
+                        checked={scheduledNotificationsEnabled}
+                        onChange={(e) => {
+                          if (e.target.checked && Notification.permission !== "granted") {
+                            Notification.requestPermission().then(p => {
+                              if (p === "granted") setScheduledNotificationsEnabled(true)
+                              else setScheduledNotificationsEnabled(false)
+                            })
+                          } else {
+                            setScheduledNotificationsEnabled(e.target.checked)
+                          }
+                        }}
+                      />
+                      時報(7/12/22時)
+                    </label>
                     <button
                       onClick={() => {
                         if (Notification.permission === 'granted') {
@@ -2426,6 +3128,200 @@ ${finalSystemPrompt}`
                       Visual Novel (Game)
                     </button>
                   </div>
+                </div>
+
+                {/* Touch Reaction Mode */}
+                <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
+                  <div className="section-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <label className="setting-label" style={{ fontSize: '1rem', color: '#e91e63' }}>Touch Reaction</label>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      className={`mode-toggle-btn ${touchReactionMode === 'fixed' ? 'active' : ''}`}
+                      onClick={() => setTouchReactionMode('fixed')}
+                      style={{
+                        flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                        backgroundColor: touchReactionMode === 'fixed' ? '#fce4ec' : '#f5f5f5',
+                        color: touchReactionMode === 'fixed' ? '#c2185b' : '#666', fontWeight: 'bold', cursor: 'pointer'
+                      }}
+                    >
+                      Fixed (Voice)
+                    </button>
+                    <button
+                      className={`mode-toggle-btn ${touchReactionMode === 'ai' ? 'active' : ''}`}
+                      onClick={() => setTouchReactionMode('ai')}
+                      style={{
+                        flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                        backgroundColor: touchReactionMode === 'ai' ? '#e1bee7' : '#f5f5f5',
+                        color: touchReactionMode === 'ai' ? '#7b1fa2' : '#666', fontWeight: 'bold', cursor: 'pointer'
+                      }}
+                    >
+                      AI Generated
+                    </button>
+                  </div>
+                  <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
+                    ※AIモードは反応生成に数秒かかりますが、状況に応じた多彩な反応を楽しめます。
+                  </p>
+                </div>
+
+                {/* TTS (Style-Bert-VITS2) Settings */}
+                <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
+                  <div className="section-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <label className="setting-label" style={{ fontSize: '1rem', color: '#00897b' }}>音声読み上げ (TTS)</label>
+                      <span style={{ fontSize: '0.7rem', backgroundColor: '#00897b', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Style-Bert-VITS2</span>
+                    </div>
+                  </div>
+
+                  {/* Enable Toggle */}
+                  <div style={{ marginBottom: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={ttsEnabled}
+                        onChange={(e) => setTtsEnabled(e.target.checked)}
+                      />
+                      <span>TTSを有効にする</span>
+                    </label>
+                  </div>
+
+                  {ttsEnabled && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingLeft: '8px', borderLeft: '2px solid #00897b' }}>
+                      {/* API URL */}
+                      <div>
+                        <label style={{ fontSize: '0.8rem', color: '#666' }}>API URL</label>
+                        <input
+                          type="text"
+                          className="api-key-input"
+                          value={ttsApiUrl}
+                          onChange={(e) => setTtsApiUrl(e.target.value)}
+                          placeholder="http://127.0.0.1:5000"
+                        />
+                      </div>
+                      {/* Model ID */}
+                      <div>
+                        <label style={{ fontSize: '0.8rem', color: '#666' }}>モデル名 (model_assetsのフォルダ名)</label>
+                        <input
+                          type="text"
+                          className="api-key-input"
+                          value={ttsModelName}
+                          onChange={(e) => setTtsModelName(e.target.value)}
+                          placeholder=""
+                        />
+                      </div>
+                      {/* Auto Play Toggle */}
+                      <div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                          <input
+                            type="checkbox"
+                            checked={ttsAutoPlay}
+                            onChange={(e) => setTtsAutoPlay(e.target.checked)}
+                          />
+                          <span>AI応答時に自動読み上げ</span>
+                        </label>
+                      </div>
+                      {/* Test Button */}
+                      <button
+                        className="setting-btn"
+                        onClick={() => speakText('テスト音声です')}
+                        style={{ marginTop: '4px' }}
+                      >
+                        🔊 読み上げテスト
+                      </button>
+
+                      {/* Dictionary Section */}
+                      <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #ccc' }}>
+                        <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#00897b' }}>読み間違い辞書</label>
+                        <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '4px' }}>
+                          特定の漢字を指定した読み方に変換できます（例：主→あるじ）
+                        </p>
+                        <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
+                          <input
+                            type="text"
+                            placeholder="漢字"
+                            id="tts-dict-term"
+                            style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}
+                          />
+                          <input
+                            type="text"
+                            placeholder="読み"
+                            id="tts-dict-reading"
+                            style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}
+                          />
+                          <button
+                            onClick={() => {
+                              const term = document.getElementById('tts-dict-term').value.trim()
+                              const reading = document.getElementById('tts-dict-reading').value.trim()
+                              if (term && reading) {
+                                setTtsDictionary(prev => ({ ...prev, [term]: reading }))
+                                document.getElementById('tts-dict-term').value = ''
+                                document.getElementById('tts-dict-reading').value = ''
+                              }
+                            }}
+                            style={{ padding: '4px 8px', fontSize: '0.8rem', backgroundColor: '#00897b', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                          >
+                            追加
+                          </button>
+                        </div>
+                        {Object.keys(ttsDictionary).length > 0 && (
+                          <div style={{ maxHeight: '100px', overflowY: 'auto', fontSize: '0.8rem', backgroundColor: '#f5f5f5', padding: '4px', borderRadius: '4px' }}>
+                            {Object.entries(ttsDictionary).map(([term, reading]) => (
+                              <div key={term} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 4px' }}>
+                                <span>{term} → {reading}</span>
+                                <button
+                                  onClick={() => {
+                                    const newDict = { ...ttsDictionary }
+                                    delete newDict[term]
+                                    setTtsDictionary(newDict)
+                                  }}
+                                  style={{ background: 'none', border: 'none', color: '#e53935', cursor: 'pointer', fontSize: '0.8rem' }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Live2D Settings */}
+                <div className="memory-section">
+                  <div className="section-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <label className="setting-label">🎭 Live2D</label>
+                      <span style={{ fontSize: '0.7rem', backgroundColor: '#e91e63', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Beta</span>
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={live2dEnabled}
+                        onChange={(e) => setLive2dEnabled(e.target.checked)}
+                      />
+                      <span>Live2Dを有効にする</span>
+                    </label>
+                    <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
+                      VNモードで静止画の代わりにLive2Dモデルを表示します
+                    </p>
+                  </div>
+                  {live2dEnabled && (
+                    <div>
+                      <label style={{ fontSize: '0.8rem', color: '#666' }}>モデルパス (publicフォルダからの相対パス)</label>
+                      <input
+                        type="text"
+                        className="api-key-input"
+                        value={live2dModelPath}
+                        onChange={(e) => setLive2dModelPath(e.target.value)}
+                        placeholder="./model/model.model3.json"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Anti-Censorship (Dummy) Settings */}
@@ -2953,94 +3849,123 @@ ${finalSystemPrompt}`
                   </button>
                 </div>
 
-                {/* Close Button */}
-                <button className="close-settings-btn" onClick={() => setIsMemoryOpen(false)}>
-                  設定を閉じる
-                </button>
+                {/* 8. Utilities (Reload) */}
+                <div className="memory-section" style={{ borderTop: '2px solid #ddd', paddingTop: '16px', marginTop: '16px' }}>
+                  <div className="section-header">
+                    <RefreshCw size={16} />
+                    <label className="setting-label">ユーティリティ</label>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (confirm('アプリを再読み込みしますか？')) {
+                        window.location.reload()
+                      }
+                    }}
+                    className="setting-btn"
+                    style={{
+                      width: '100%',
+                      justifyContent: 'center',
+                      backgroundColor: '#f5f5f5',
+                      color: '#333',
+                      border: '1px solid #ccc',
+                      padding: '12px',
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    <RefreshCw size={16} /> アプリを再読み込み (Reload App)
+                  </button>
+                  {/* Close Button */}
+                  <button className="close-settings-btn" onClick={() => setIsMemoryOpen(false)}>
+                    設定を閉じる
+                  </button>
+                </div>
               </div>
-            </div >
-          </div >
+            </div>
+          </div>
         )
       }
 
       {/* Crop Modal */}
-      {imageToCrop && (
-        <div className="modal-overlay" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-content crop-modal">
-            <div className="modal-header">
-              <h3>アイコン画像を編集</h3>
-              <button onClick={handleCancelCrop}><ChevronLeft size={24} /></button>
-            </div>
-            <div className="crop-workspace">
-              <div
-                className="crop-area-container"
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleMouseUp}
-              >
-                <img
-                  ref={renderImageRef}
-                  src={imageToCrop}
-                  className="crop-target-image"
-                  style={{ transform: `translate(${cropPos.x}px, ${cropPos.y}px) scale(${cropZoom})` }}
-                  draggable={false}
-                  alt="Crop target"
-                />
-                <div className="crop-mask"></div>
+      {
+        imageToCrop && (
+          <div className="modal-overlay" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-content crop-modal">
+              <div className="modal-header">
+                <h3>アイコン画像を編集</h3>
+                <button onClick={handleCancelCrop}><ChevronLeft size={24} /></button>
               </div>
-              <div className="crop-controls">
-                <ZoomIn size={20} />
-                <input
-                  type="range"
-                  min="0.5"
-                  max="3.0"
-                  step="0.1"
-                  value={cropZoom}
-                  onChange={(e) => setCropZoom(parseFloat(e.target.value))}
-                  className="crop-zoom-slider"
-                />
-              </div>
-              <div className="crop-instructions">
-                <Move size={14} /> ドラッグで移動、スライダーで拡大
-              </div>
-              <div className="crop-actions">
-                <button className="crop-btn cancel" onClick={handleCancelCrop}>キャンセル</button>
-                <button className="crop-btn save" onClick={handleCropComplete}>
-                  <Check size={18} /> 決定
-                </button>
+              <div className="crop-workspace">
+                <div
+                  className="crop-area-container"
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleMouseUp}
+                >
+                  <img
+                    ref={renderImageRef}
+                    src={imageToCrop}
+                    className="crop-target-image"
+                    style={{ transform: `translate(${cropPos.x}px, ${cropPos.y}px) scale(${cropZoom})` }}
+                    draggable={false}
+                    alt="Crop target"
+                  />
+                  <div className="crop-mask"></div>
+                </div>
+                <div className="crop-controls">
+                  <ZoomIn size={20} />
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="3.0"
+                    step="0.1"
+                    value={cropZoom}
+                    onChange={(e) => setCropZoom(parseFloat(e.target.value))}
+                    className="crop-zoom-slider"
+                  />
+                </div>
+                <div className="crop-instructions">
+                  <Move size={14} /> ドラッグで移動、スライダーで拡大
+                </div>
+                <div className="crop-actions">
+                  <button className="crop-btn cancel" onClick={handleCancelCrop}>キャンセル</button>
+                  <button className="crop-btn save" onClick={handleCropComplete}>
+                    <Check size={18} /> 決定
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* PREVIEW MODAL */}
-      {previewImage && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 10000,
-          backgroundColor: 'rgba(0,0,0,0.85)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          cursor: 'pointer'
-        }} onClick={() => setPreviewImage(null)}>
-          <div style={{ position: 'relative', width: '90%', height: '90%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <img
-              src={previewImage}
-              alt="Preview"
-              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', borderRadius: '4px' }}
-            />
-            <div style={{ position: 'absolute', bottom: 20, color: 'white', backgroundColor: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '20px', pointerEvents: 'none' }}>
-              クリックして閉じる
+      {
+        previewImage && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 10000,
+            backgroundColor: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer'
+          }} onClick={() => setPreviewImage(null)}>
+            <div style={{ position: 'relative', width: '90%', height: '90%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <img
+                src={previewImage}
+                alt="Preview"
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', borderRadius: '4px' }}
+              />
+              <div style={{ position: 'absolute', bottom: 20, color: 'white', backgroundColor: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '20px', pointerEvents: 'none' }}>
+                クリックして閉じる
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div >
+        )
+      }
+    </div>
   )
 }
-
 
 export default App

@@ -5,12 +5,14 @@ import App from './App.jsx'
 import ErrorBoundary from './ErrorBoundary.jsx'
 
 // Register Service Worker
+// Register Service Worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then(registration => {
-      console.log('SW registered: ', registration)
+    // Use relative path for GitHub Pages compatibility
+    navigator.serviceWorker.register('./sw.js', { scope: './' }).then(registration => {
+      console.log('SW registered with scope: ', registration.scope)
     }).catch(registrationError => {
-      console.log('SW registration failed: ', registrationError)
+      console.error('SW registration failed: ', registrationError)
     })
   })
 }

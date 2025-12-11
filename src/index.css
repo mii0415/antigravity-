@@ -25,13 +25,19 @@
   box-sizing: border-box;
 }
 
+html {
+  overscroll-behavior: none;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   font-family: Inter, system-ui, -apple-system, sans-serif;
   background-color: var(--chat-bg);
   color: var(--text-primary);
   /* For mobile: prevent elastic scrolling on body */
-  overscroll-behavior-y: none;
+  overscroll-behavior: none;
+  overflow-x: hidden;
 }
 
 .app-container {
