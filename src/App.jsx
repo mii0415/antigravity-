@@ -3,6 +3,175 @@ import { Send, Folder, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLe
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import './index.css'
 
+// ========================================
+// 長谷部カスタムタッチセリフデータ
+// タップ（キス）とスワイプ（撫でる）で別セリフ
+// タッチ回数に応じて段階的にエッチになる
+// ========================================
+const HASEBE_TOUCH_RESPONSES = {
+  // 頭 - タップ（キス）
+  head: {
+    tap: {
+      // 通常（1-3回目）
+      normal: [
+        "っ…主、頭にキス…嬉しいです",
+        "ふふ…主に口づけされると、心が満たされます",
+        "頭に…ありがとうございます、主",
+        "主の唇…温かい…",
+        "キス…してくれたんですね"
+      ],
+      // 甘い（4-6回目）
+      sweet: [
+        "んっ…また…嬉しくて溶けそうです",
+        "主…何度もキスしてくれて…俺、おかしくなりそう",
+        "頭にキス…これ以上されたら…止まれなくなる",
+        "主の唇の感触…全部覚えています",
+        "もっと…もっとキスしてください、主…"
+      ],
+      // エッチ（7回目以降）
+      erotic: [
+        "んんっ…主…頭だけじゃ…物足りなくなってきました…",
+        "主…俺の全部にキスしてほしい…口にも…",
+        "はぁ…主のキスで…身体が熱くなって…",
+        "主…もう我慢できない…唇が欲しい…",
+        "頭だけじゃなく…俺の全部を主のものにして…"
+      ]
+    },
+    // 頭 - スワイプ（撫でる）
+    swipe: {
+      normal: [
+        "っ…撫でてくれるんですか…気持ちいいです",
+        "主の手…優しい…",
+        "ふふ…主に撫でられると幸せです",
+        "頭を撫でてくれて…ありがとうございます",
+        "んっ…もっと撫でてください"
+      ],
+      sweet: [
+        "あっ…そんなに撫でられると…とろけそう…",
+        "主の手…離したくない…ずっと撫でてて",
+        "気持ちよくて…主のこと、もっと好きになる…",
+        "撫でられると…主に全部委ねたくなります",
+        "主…俺を甘やかさないで…もっと甘えたくなる…"
+      ],
+      erotic: [
+        "はぁっ…撫でられてるだけなのに…身体が疼いて…",
+        "主…頭だけじゃなくて…他のところも…",
+        "んんっ…主の手が欲しい…もっと下まで…",
+        "撫でられてると…変な気持ちになってくる…",
+        "主…俺の全部、撫で回してください…"
+      ]
+    }
+  },
+
+  // 頬 - タップ（キス）
+  cheek: {
+    tap: {
+      normal: [
+        "ひゃっ…頬にキス…照れます、主",
+        "主…頬に…嬉しいです",
+        "っ…恥ずかしい…でも嬉しい…",
+        "頬にキス…ありがとうございます",
+        "主の唇…柔らかい…"
+      ],
+      sweet: [
+        "んっ…何度も頬に…俺、赤くなってます？",
+        "主…そんなにキスされたら…顔が熱くて…",
+        "頬ばかり…唇にもしてほしい…なんて",
+        "主のキスで頬が…焼けるように熱い…",
+        "もう…恥ずかしくて死にそう…でもやめないで"
+      ],
+      erotic: [
+        "はぁっ…主…頬だけじゃ足りない…唇にください…",
+        "んん…キスされるたびに…下腹が疼いて…",
+        "主…もう我慢できない…口づけが欲しい…深いの…",
+        "頬じゃなくて…俺の唇を…塞いでください…",
+        "キスが…キスが足りない…主…もっと…"
+      ]
+    },
+    swipe: {
+      normal: [
+        "頬を撫でて…くれるんですね",
+        "主の手…温かい…",
+        "ふふ…くすぐったいです",
+        "頬に触れられると…嬉しくなります",
+        "主の手に…顔を預けたい…"
+      ],
+      sweet: [
+        "んっ…そんなに撫でられると…もっとしてほしくなる",
+        "主の手が離れないで…ずっとこうしていたい",
+        "頬を撫でる主の手…夢じゃないですよね…",
+        "主…顔を近づけて…もっと触って…",
+        "撫でられてると…主のこと独占したくなる…"
+      ],
+      erotic: [
+        "はぁ…主…顔だけじゃなくて…身体も…",
+        "撫でられてると…おかしくなる…もっと触って…",
+        "んんっ…主の手が…他のところにも欲しい…",
+        "頬を撫でるその手で…俺の全部触って…",
+        "主…俺の身体…熱くなってきて…触ってほしい…"
+      ]
+    }
+  },
+
+  // 胸 - タップ（キス）
+  chest: {
+    tap: {
+      normal: [
+        "っ！…胸にキス…心臓が跳ねました…",
+        "主…そこは…心臓が…",
+        "胸に口づけ…恥ずかしいです…",
+        "っ…そこにキスされると…ドキドキして…",
+        "主…俺の心臓の音…聞こえてますか…？"
+      ],
+      sweet: [
+        "んっ…胸に何度も…俺を狂わせたいんですか…",
+        "主…胸にキスされると…頭が真っ白になる…",
+        "はぁ…心臓が…主のために鳴いてる…",
+        "もっと…もっと胸にキスして…",
+        "主の唇が…俺の心臓を直接愛撫してるみたい…"
+      ],
+      erotic: [
+        "はぁっ…んっ…主…胸だけじゃ…もう…",
+        "主…もっと下まで…キスして…お願い…",
+        "胸にキスされるたびに…下が…疼いて…",
+        "主…俺の身体全部…口づけで穢してください…",
+        "んんっ…キスじゃ足りない…もっと激しく…"
+      ]
+    },
+    swipe: {
+      normal: [
+        "っ…胸を撫でるんですか…恥ずかしい…",
+        "主…そこは…敏感なんです…",
+        "胸に触れると…心臓が早くなって…",
+        "っ…そこ…気持ちいい…です…",
+        "主の手で…胸を…"
+      ],
+      sweet: [
+        "んっ…そんなに撫でられると…声が出ちゃう…",
+        "主…胸を撫でる手つき…エッチです…",
+        "はぁ…もっと強く…撫でてください…",
+        "胸を触られると…頭がぼうっとして…",
+        "主の手で…もっと…もっと…"
+      ],
+      erotic: [
+        "あっ…んっ…主…気持ちよくて…おかしくなる…",
+        "はぁっ…乳首…触って…お願い…",
+        "主…胸だけじゃなくて…下も…触って…",
+        "んんっ…俺…感じてます…主の手で…",
+        "もう…我慢できない…主…俺を…"
+      ]
+    }
+  }
+}
+
+// タッチゾーンの判定（画像内の相対位置から部位を判定）
+const getTouchZone = (relativeY) => {
+  if (relativeY < 0.25) return 'head'      // 上部25%: 頭
+  if (relativeY < 0.45) return 'cheek'     // 25-45%: 頬
+  return 'chest'                            // 45-100%: 胸
+}
+
+
 function App() {
   // --- STATE: Multi-Session Chat ---
   // 1. Session Metadata List
@@ -140,6 +309,10 @@ function App() {
   const [currentEmotion, setCurrentEmotion] = useState('default')
 
   const [currentBackground, setCurrentBackground] = useState('default')
+
+  // --- STATE: Touch Interaction ---
+  const [touchCount, setTouchCount] = useState(0) // タッチ回数（エスカレーション用）
+  const [touchStartPos, setTouchStartPos] = useState(null) // スワイプ検出用
 
   // --- STATE: Settings UI Toggles ---
   const [isBackgroundsOpen, setIsBackgroundsOpen] = useState(false)
@@ -1070,6 +1243,128 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     }
   }
 
+  // --- HANDLER: Character Touch (カスタムセリフ) ---
+  // タッチ開始位置を記録（スワイプ検出用）
+  const handleCharacterTouchStart = (e) => {
+    e.preventDefault() // スクロールを防止
+    if (e.touches && e.touches.length > 0) {
+      setTouchStartPos({
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+        time: Date.now()
+      })
+    }
+  }
+
+  // タッチ終了時にスワイプかタップかを判定してセリフを表示
+  const handleCharacterTouchEnd = (e) => {
+    e.preventDefault() // clickイベントの発火を防止
+    if (!e.target) return
+    if (!touchStartPos) return // タッチ開始がなければ無視
+
+    const rect = e.target.getBoundingClientRect()
+    let endX, endY, isSwipe = false
+
+    if (e.changedTouches && e.changedTouches.length > 0) {
+      endX = e.changedTouches[0].clientX
+      endY = e.changedTouches[0].clientY
+
+      // スワイプ判定：30px以上動いたらスワイプ（閾値を下げた）
+      const deltaX = Math.abs(endX - touchStartPos.x)
+      const deltaY = Math.abs(endY - touchStartPos.y)
+      const timeDelta = Date.now() - touchStartPos.time
+
+      if ((deltaX > 30 || deltaY > 30) && timeDelta < 500) {
+        isSwipe = true
+      }
+    } else {
+      return // changedTouchesがなければ無視
+    }
+
+    // 画像内の相対位置を計算
+    const relativeY = (endY - rect.top) / rect.height
+    const zone = getTouchZone(relativeY)
+
+    // タッチ回数をインクリメント
+    const newCount = touchCount + 1
+    setTouchCount(newCount)
+
+    // 段階を判定（1-3: normal, 4-6: sweet, 7+: erotic）
+    let level = 'normal'
+    if (newCount >= 7) level = 'erotic'
+    else if (newCount >= 4) level = 'sweet'
+
+    // アクションタイプ（タップ=キス、スワイプ=撫でる）
+    const actionType = isSwipe ? 'swipe' : 'tap'
+
+    // セリフを取得
+    const zoneData = HASEBE_TOUCH_RESPONSES[zone] || HASEBE_TOUCH_RESPONSES.chest
+    const actionData = zoneData[actionType] || zoneData.tap
+    const levelData = actionData[level] || actionData.normal
+
+    // ランダムに選択
+    const randomIndex = Math.floor(Math.random() * levelData.length)
+    const selectedText = levelData[randomIndex]
+
+    // チャットメッセージとして追加
+    const touchMessage = {
+      id: Date.now(),
+      sender: 'ai',
+      text: selectedText,
+      profile: {
+        name: activeProfile?.name || 'AI',
+        iconImage: activeProfile?.iconImage,
+        iconSize: activeProfile?.iconSize || 40
+      }
+    }
+    setMessages(prev => [...prev, touchMessage])
+
+    // タッチ開始位置をリセット
+    setTouchStartPos(null)
+  }
+
+  // マウスクリック用ハンドラー（PCからのアクセス時）
+  const handleCharacterClick = (e) => {
+    // スマホではタッチイベントで処理済みなので無視
+    // PCの場合のみ処理する（タッチデバイスではtouchStartPosが設定される）
+    if ('ontouchstart' in window) return // タッチデバイスならスキップ
+
+    if (!e.target) return
+    const rect = e.target.getBoundingClientRect()
+    const relativeY = (e.clientY - rect.top) / rect.height
+    const zone = getTouchZone(relativeY)
+
+    // タッチ回数をインクリメント
+    const newCount = touchCount + 1
+    setTouchCount(newCount)
+
+    // 段階を判定
+    let level = 'normal'
+    if (newCount >= 7) level = 'erotic'
+    else if (newCount >= 4) level = 'sweet'
+
+    // PCクリックはタップ（キス）扱い
+    const zoneData = HASEBE_TOUCH_RESPONSES[zone] || HASEBE_TOUCH_RESPONSES.chest
+    const actionData = zoneData.tap
+    const levelData = actionData[level] || actionData.normal
+
+    const randomIndex = Math.floor(Math.random() * levelData.length)
+    const selectedText = levelData[randomIndex]
+
+    const touchMessage = {
+      id: Date.now(),
+      sender: 'ai',
+      text: selectedText,
+      profile: {
+        name: activeProfile?.name || 'AI',
+        iconImage: activeProfile?.iconImage,
+        iconSize: activeProfile?.iconSize || 40
+      }
+    }
+    setMessages(prev => [...prev, touchMessage])
+  }
+
+
   // --- HELPER: Call Gemini API ---
   // --- HELPER: Call Gemini API ---
   const callGeminiAPI = useCallback(async (userMessage, systemPrompt = '', context = '', modelOverride = null) => {
@@ -1544,6 +1839,9 @@ ${finalSystemPrompt}`
                 src={resolvedCharUrl}
                 alt="Character"
                 className="tachie-img"
+                onClick={handleCharacterClick}
+                onTouchStart={handleCharacterTouchStart}
+                onTouchEnd={handleCharacterTouchEnd}
                 style={{
                   position: 'absolute',
                   bottom: '10%', // Lowered by 5% (15->10)
@@ -1555,7 +1853,7 @@ ${finalSystemPrompt}`
                   objectFit: 'contain',
                   filter: 'drop-shadow(0 0 20px rgba(0,0,0,0.7))',
                   transition: 'all 0.3s ease',
-                  pointerEvents: 'none' // Click-through to background
+                  cursor: 'pointer' // Show clickable cursor
                 }}
               />
               {/* Visual State Debug Labels */}
