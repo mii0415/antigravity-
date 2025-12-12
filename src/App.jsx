@@ -2110,7 +2110,8 @@ Response must be short (under 30 chars). ${tagInstruction}`
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
-        iconSize: activeProfile?.iconSize || 40
+        iconSize: activeProfile?.iconSize || 40,
+        emotions: activeProfile?.emotions
       }
     }
     setMessages(prev => [...prev, touchMessage])
@@ -2238,7 +2239,8 @@ Response must be short (under 30 chars). ${tagInstruction}`
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
-        iconSize: activeProfile?.iconSize || 40
+        iconSize: activeProfile?.iconSize || 40,
+        emotions: activeProfile?.emotions
       }
     }
     setMessages(prev => [...prev, touchMessage])
@@ -2326,7 +2328,8 @@ Response must be short (under 30 chars). ${tagInstruction}`
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
-        iconSize: activeProfile?.iconSize || 40
+        iconSize: activeProfile?.iconSize || 40,
+        emotions: activeProfile?.emotions
       }
     }
     setMessages(prev => [...prev, touchMessage])
@@ -2397,7 +2400,8 @@ Response must be short (under 30 chars). ${tagInstruction}`
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
-        iconSize: activeProfile?.iconSize || 40
+        iconSize: activeProfile?.iconSize || 40,
+        emotions: activeProfile?.emotions
       }
     }
     setMessages(prev => [...prev, touchMessage])
