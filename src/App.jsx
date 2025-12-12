@@ -627,6 +627,9 @@ function App() {
 
 
   const handleCreateSession = useCallback(async (initialText = null) => {
+    // Sanitize input: If called from onClick, initialText might be an Event object
+    if (initialText && typeof initialText !== 'string') initialText = null
+
     console.log('Using handleCreateSession with:', initialText)
     const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `session_${Date.now()}_${Math.random().toString(36).slice(2)}`
     const newSession = { id: newId, title: initialText ? (initialText.slice(0, 15) + '...') : '新しいチャット', lastUpdated: Date.now() }
