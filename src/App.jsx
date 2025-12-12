@@ -2860,8 +2860,30 @@ ${finalSystemPrompt}`
           let avatarStyle = {}
           if (msg.sender === 'ai') {
             const profile = msg.profile || activeProfile
-            if (profile && profile.iconImage) {
-              avatarContent = <img src={profile.iconImage} alt="AI" className="custom-avatar-img" />
+
+            // Emotion Icon Logic
+            let iconSrc = null
+            if (profile) {
+              // Priority 1: Check for emotion tag in text e.g. [Joy]
+              if (profile.emotions && msg.text) {
+                const match = msg.text.match(/[\[【](.*?)[\]】]/) // Extract content inside [] or 【】
+                if (match) {
+                  const tag = match[1]
+                  // Case-insensitive lookup
+                  const key = Object.keys(profile.emotions).find(k => k.toLowerCase() === tag.toLowerCase())
+                  if (key) {
+                    iconSrc = profile.emotions[key]
+                  }
+                }
+              }
+              // Priority 2: Default Icon
+              if (!iconSrc) {
+                iconSrc = profile.iconImage
+              }
+            }
+
+            if (iconSrc) {
+              avatarContent = <img src={iconSrc} alt="AI" className="custom-avatar-img" />
               avatarStyle = {
                 width: `${profile.iconSize || 40}px`,
                 height: `${profile.iconSize || 40}px`,
