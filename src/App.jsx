@@ -1869,6 +1869,17 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     if (!responseText) return
 
     detectAndSetEmotion(responseText)
+
+    // Extract emotion for history (Normalize using emotionToExpression if possible)
+    let detectedEmotion = null
+    const tagMatch = responseText.match(/[\[【](.*?)[\]】]/)
+    if (tagMatch) {
+      const tag = tagMatch[1] // e.g. "Joy" or "喜び"
+      // Use the mapping to normalize japanese tags to english keys if available
+      // emotionToExpression is defined above
+      detectedEmotion = emotionToExpression[tag] || emotionToExpression[tag.toLowerCase()] || tag
+    }
+
     const cleanText = cleanResponseText(responseText)
 
     // Add to chat
@@ -1878,6 +1889,7 @@ The message must be consistent with your character persona and tone. (Max 1 shor
         id: Date.now(),
         sender: 'ai',
         text: cleanText,
+        emotion: detectedEmotion, // Saved emotion key
         model: selectedModel,
         profile: { ...activeProfile },
         variants: [cleanText],
@@ -2864,19 +2876,31 @@ ${finalSystemPrompt}`
             // Emotion Icon Logic
             let iconSrc = null
             if (profile) {
-              // Priority 1: Check for emotion tag in text e.g. [Joy]
-              if (profile.emotions && msg.text) {
-                const match = msg.text.match(/[\[【](.*?)[\]】]/) // Extract content inside [] or 【】
+              // Priority 1: Check saved emotion property (New logic)
+              if (msg.emotion && profile.emotions) {
+                const key = Object.keys(profile.emotions).find(k => k.toLowerCase() === msg.emotion.toLowerCase())
+                if (key) {
+                  iconSrc = profile.emotions[key]
+                }
+              }
+
+              // Priority 2: Check for emotion tag in text (Fallback / old logic)
+              // Note: cleanResponseText removes tags, so this mostly fails for history,
+              // but kept for uncleaned text scenarios.
+              if (!iconSrc && profile.emotions && msg.text) {
+                const match = msg.text.match(/[\[【](.*?)[\]】]/)
                 if (match) {
                   const tag = match[1]
-                  // Case-insensitive lookup
-                  const key = Object.keys(profile.emotions).find(k => k.toLowerCase() === tag.toLowerCase())
+                  // Try explicit mapping in case it's Japanese tag remaining
+                  const normalized = emotionToExpression[tag] || tag
+                  const key = Object.keys(profile.emotions).find(k => k.toLowerCase() === normalized.toLowerCase())
                   if (key) {
                     iconSrc = profile.emotions[key]
                   }
                 }
               }
-              // Priority 2: Default Icon
+
+              // Priority 3: Default Icon
               if (!iconSrc) {
                 iconSrc = profile.iconImage
               }
