@@ -542,12 +542,12 @@ textarea {
   height: 100%;
   border-radius: 50%;
   object-fit: cover;
-  object-position: top 15%;
-  /* 少し下げる（頭頂部が切れないように） */
+  object-position: top 25%;
+  /* 少し下げる（口元映るように） */
   transform: scale(2.2);
-  /* 顔アップ（さらに拡大） */
-  transform-origin: center 20%;
-  /* 拡大の中心を少し上の顔付近に */
+  /* 顔アップ */
+  transform-origin: center 25%;
+  /* 拡大の中心も合わせる */
 }
 
 /* Helper to allow variable size avatars in the chat list */
