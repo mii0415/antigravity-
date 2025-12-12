@@ -700,13 +700,18 @@ function App() {
 
       // Anti-Censorship injection
       let finalSystemPrompt = systemPrompt
-      // Visual Novel Mode Instruction
-      if (uiMode === 'visual_novel') {
+      // Visual Novel Mode Instruction OR if Emotions/Live2D active
+      const hasEmotions = activeProfile.emotions && Object.keys(activeProfile.emotions).length > 0
+      if (uiMode === 'visual_novel' || live2dEnabled || hasEmotions) {
         const emoKeys = Object.keys(activeProfile.emotions || {}).map(k => `[${k}]`).join(', ')
-        finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode'.
-1. You MUST prefix your response with a single emotion tag from this list: ${emoKeys || '(No emotions available, use [Normal])'}.
-2. Example: [Joy] "Hello!"
-3. To change the background, use [BG: LocationName].`
+        const tagInstruction = hasEmotions ?
+          `emotion tag from this list: ${emoKeys}` :
+          `emotion tag like [Joy], [Anger], [Love], [Sadness]`
+
+        finalSystemPrompt += `\n[System Note]: 
+ 1. You MUST prefix your response with a single ${tagInstruction}.
+ 2. Example: [Joy] "Hello!"
+ 3. To change the background, use [BG: LocationName].`
       }
 
       if (useDummySettings) {
@@ -748,8 +753,10 @@ ${systemPrompt}`
       if (!openRouterApiKey) throw new Error('OpenRouter API Key is missing.')
 
       let finalSystemPrompt = systemPrompt
-      // Visual Novel Mode Instruction
-      if (uiMode === 'visual_novel') {
+      // Visual Novel Mode Instruction OR if Emotions/Live2D active
+      const hasEmotions = activeProfile.emotions && Object.keys(activeProfile.emotions).length > 0
+
+      if (uiMode === 'visual_novel' || live2dEnabled || hasEmotions) {
         if (live2dEnabled) {
           // Live2D mode: Use specific English emotion tags
           finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode' with Live2D.
@@ -759,8 +766,12 @@ ${systemPrompt}`
 4. Use consistent English tags. This is REQUIRED for the expression system to work.`
         } else {
           const emoKeys = Object.keys(activeProfile.emotions || {}).map(k => `[${k}]`).join(', ')
-          finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode'.
-1. You MUST prefix your response with a single emotion tag from this list: ${emoKeys || '(No emotions available, use [Normal])'}.
+          const tagInstruction = hasEmotions ?
+            `emotion tag from this list: ${emoKeys}` :
+            `emotion tag like [Joy], [Anger], [Love], [Sadness]`
+
+          finalSystemPrompt += `\n[System Note]: 
+1. You MUST prefix your response with a single ${tagInstruction}.
 2. Example: [Joy] "Hello!"
 3. To change the background, use [BG: LocationName].`
         }
