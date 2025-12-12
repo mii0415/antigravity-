@@ -544,8 +544,8 @@ textarea {
   object-fit: cover;
   object-position: top 15%;
   /* 少し下げる（頭頂部が切れないように） */
-  transform: scale(1.6);
-  /* 顔アップのために拡大 */
+  transform: scale(2.2);
+  /* 顔アップ（さらに拡大） */
   transform-origin: center 20%;
   /* 拡大の中心を少し上の顔付近に */
 }
