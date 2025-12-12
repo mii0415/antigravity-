@@ -659,7 +659,40 @@ function App() {
     setActiveSessionId(sessionId)
     // Force load from storage for that ID
     const data = await dbGet(`antigravity_chat_${sessionId}`)
-    setMessages(data || [{ id: Date.now(), sender: 'ai', text: getHasebeGreeting(), emotion: 'joy' }])
+    const loadedMessages = data || [{ id: Date.now(), sender: 'ai', text: getHasebeGreeting(), emotion: 'joy' }]
+    setMessages(loadedMessages)
+
+    // Restore last expression from history
+    let lastExpression = 'neutral'
+    // Search backwards for the last valid emotion
+    for (let i = loadedMessages.length - 1; i >= 0; i--) {
+      const msg = loadedMessages[i]
+      if (msg.sender === 'ai') {
+        if (msg.emotion) {
+          lastExpression = msg.emotion
+          break
+        }
+        // Fallback: Check for tag in text
+        if (msg.text) {
+          const match = msg.text.match(/[\[【](.*?)[\]】]/)
+          if (match) {
+            const tag = match[1]
+            // Convert tag to expression key if needed (simple check)
+            if (activeProfile?.emotions && Object.keys(activeProfile.emotions).some(k => k.toLowerCase() === tag.toLowerCase())) {
+              lastExpression = tag
+              break
+            }
+            // Map common tags if not directly in emotions
+            if (emotionToExpression[tag]) {
+              lastExpression = emotionToExpression[tag]
+              break
+            }
+          }
+        }
+      }
+    }
+    setCurrentExpression(lastExpression)
+
     setIsFolderOpen(false)
   }
 
