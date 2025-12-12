@@ -2167,12 +2167,32 @@ Response must be short (under 30 chars). ${tagInstruction}`
     const selectedText = levelData[randomIndex]
 
     // チャットに追加
+    // Fallback emotion logic
+    const emotionKeys = Object.keys(activeProfile?.emotions || {})
+    let chosenEmotionKey = expressionName
+
+    const exactMatch = emotionKeys.find(k => k.toLowerCase() === expressionName.toLowerCase())
+    if (exactMatch) {
+      chosenEmotionKey = exactMatch
+    } else if (emotionKeys.length > 0) {
+      // No match, fallback to level-based selection
+      let targetIndex = 0
+      if (newCount >= 7) {
+        targetIndex = Math.min(emotionKeys.length - 1, 2) // 3rd image
+      } else if (newCount >= 4) {
+        targetIndex = Math.min(emotionKeys.length - 1, 1) // 2nd image
+      } else {
+        targetIndex = 0 // 1st image
+      }
+      chosenEmotionKey = emotionKeys[targetIndex]
+    }
+
     // チャットに追加
     const touchMessage = {
       id: Date.now(),
       sender: 'ai',
       text: selectedText,
-      emotion: expressionName, // Use Live2D expression as emotion key
+      emotion: chosenEmotionKey, // Use calculated emotion key
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
@@ -2235,12 +2255,32 @@ Response must be short (under 30 chars). ${tagInstruction}`
     const randomIndex = Math.floor(Math.random() * levelData.length)
     const selectedText = levelData[randomIndex]
 
+    // Fallback emotion logic
+    const emotionKeys = Object.keys(activeProfile?.emotions || {})
+    let chosenEmotionKey = expressionName
+
+    const exactMatch = emotionKeys.find(k => k.toLowerCase() === expressionName.toLowerCase())
+    if (exactMatch) {
+      chosenEmotionKey = exactMatch
+    } else if (emotionKeys.length > 0) {
+      // No match, fallback to level-based selection
+      let targetIndex = 0
+      if (newCount >= 7) {
+        targetIndex = Math.min(emotionKeys.length - 1, 2)
+      } else if (newCount >= 4) {
+        targetIndex = Math.min(emotionKeys.length - 1, 1)
+      } else {
+        targetIndex = 0
+      }
+      chosenEmotionKey = emotionKeys[targetIndex]
+    }
+
     // チャットに追加
     const touchMessage = {
       id: Date.now(),
       sender: 'ai',
       text: selectedText,
-      emotion: expressionName, // Use Live2D expression
+      emotion: chosenEmotionKey, // Use calculated emotion key
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
