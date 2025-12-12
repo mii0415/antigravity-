@@ -3483,13 +3483,13 @@ ${finalSystemPrompt}`
                             type="text"
                             placeholder="漢字"
                             id="tts-dict-term"
-                            style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}
+                            style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', color: '#000', backgroundColor: '#fff' }}
                           />
                           <input
                             type="text"
                             placeholder="読み"
                             id="tts-dict-reading"
-                            style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px' }}
+                            style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', color: '#000', backgroundColor: '#fff' }}
                           />
                           <button
                             onClick={() => {
@@ -3509,7 +3509,7 @@ ${finalSystemPrompt}`
                         {Object.keys(ttsDictionary).length > 0 && (
                           <div style={{ maxHeight: '100px', overflowY: 'auto', fontSize: '0.8rem', backgroundColor: '#f5f5f5', padding: '4px', borderRadius: '4px' }}>
                             {Object.entries(ttsDictionary).map(([term, reading]) => (
-                              <div key={term} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 4px' }}>
+                              <div key={term} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 4px', color: '#333' }}>
                                 <span>{term} → {reading}</span>
                                 <button
                                   onClick={() => {
