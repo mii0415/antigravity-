@@ -359,6 +359,8 @@ function App() {
   const [live2dModelPath, setLive2dModelPath] = useState('./長谷部第四弾4001フリー/長谷部第四弾4001フリー.model3.json')
   const live2dRef = useRef(null)
   const [currentExpression, setCurrentExpression] = useState('neutral')
+  const currentExpressionRef = useRef('neutral') // Ref to access latest state in callbacks
+  useEffect(() => { currentExpressionRef.current = currentExpression }, [currentExpression])
   const [lastAIResponse, setLastAIResponse] = useState('') // For debugging
 
   // --- STATE: Input Buffering ---
@@ -2938,15 +2940,17 @@ ${finalSystemPrompt}`
                     onModelLoad={(model) => {
                       console.log('Live2D loaded:', model)
                       // Apply current expression after model loads (fixes race condition)
-                      if (currentExpression && live2dRef.current) {
-                        console.log('🎭 Applying expression after model load:', currentExpression)
+                      // Use Ref to get the LATEST expression, not the one from closure
+                      const latestExpr = currentExpressionRef.current
+                      if (latestExpr && live2dRef.current) {
+                        console.log('🎭 Applying expression after model load:', latestExpr)
                         setTimeout(() => {
                           try {
-                            live2dRef.current?.setExpression(currentExpression)
+                            live2dRef.current?.setExpression(latestExpr)
                           } catch (e) {
                             console.warn('Expression apply after load failed:', e)
                           }
-                        }, 100) // Small delay to ensure model is fully ready
+                        }, 500) // Increase delay to ensure model is fully ready
                       }
                     }}
                     onModelError={(err) => console.error('Live2D error:', err)}
