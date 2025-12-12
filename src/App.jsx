@@ -541,7 +541,14 @@ function App() {
 
                 if (responseText) {
                   const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
-                  new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                  const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                  n.onclick = () => {
+                    window.focus()
+                    if (handleCreateSessionRef.current) {
+                      handleCreateSessionRef.current(cleanText)
+                    }
+                    n.close()
+                  }
                 }
               } else if (selectedModel.startsWith('gemini')) {
                 // Fallback to existing logic if NO key but Gemini is selected
@@ -549,7 +556,14 @@ function App() {
                 let responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
                 if (responseText) {
                   const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
-                  new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                  const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                  n.onclick = () => {
+                    window.focus()
+                    if (handleCreateSessionRef.current) {
+                      handleCreateSessionRef.current(cleanText)
+                    }
+                    n.close()
+                  }
                 }
               }
             } catch (e) {
@@ -623,6 +637,10 @@ function App() {
 
   const messagesEndRef = useRef(null)
 
+  // Ref to access handleCreateSession inside checkTime callback without dependency issues
+  const handleCreateSessionRef = useRef(null)
+
+
   // --- EFFECT: Saves ---
   useEffect(() => {
     try {
@@ -685,15 +703,21 @@ function App() {
     return greeting;
   }
 
-  const handleCreateSession = () => {
+  const handleCreateSession = (initialText = null) => {
     const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `session_${Date.now()}_${Math.random().toString(36).slice(2)}`
-    const newSession = { id: newId, title: '新しいチャット', lastUpdated: Date.now() }
+    const newSession = { id: newId, title: initialText ? (initialText.slice(0, 15) + '...') : '新しいチャット', lastUpdated: Date.now() }
 
     setSessions(prev => [newSession, ...(prev || [])]) // Add to top
     setActiveSessionId(newId)
-    setMessages([{ id: Date.now(), sender: 'ai', text: getHasebeGreeting(), emotion: 'joy' }])
+    // Use provided text or generate greeting
+    const firstMessage = initialText || getHasebeGreeting()
+    setMessages([{ id: Date.now(), sender: 'ai', text: firstMessage, emotion: 'joy' }])
     setIsFolderOpen(false) // Close sidebar on mobile after selection if needed
   }
+
+  // Update ref for checkTime access
+  useEffect(() => { handleCreateSessionRef.current = handleCreateSession })
+
 
   const handleSwitchSession = async (sessionId) => {
     setActiveSessionId(sessionId)
