@@ -1948,7 +1948,13 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     const zoneName = zone.charAt(0).toUpperCase() + zone.slice(1)
 
     // ユーザーのアクションを表現するテキスト
-    const promptText = `*User touches your ${zoneName} (${actionDesc}, ${levelDesc})*`
+    const hasEmotions = activeProfile.emotions && Object.keys(activeProfile.emotions).length > 0
+    const tagInstruction = hasEmotions
+      ? `Start with an emotion tag like [Love], [Joy], [Embarrassment] (match your reaction).`
+      : `Start with an emotion tag like [Joy].`
+
+    const promptText = `*User touches your ${zoneName} (${actionDesc}, ${levelDesc})*
+Response must be short (under 30 chars). ${tagInstruction}`
 
     // キューに追加 (API呼び出しはexecuteBufferedAIRequestが行う)
     queueAIRequest('action', promptText)
