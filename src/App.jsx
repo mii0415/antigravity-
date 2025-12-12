@@ -685,6 +685,43 @@ function App() {
     dbSet('antigravity_custom_or_model', customOpenRouterModel).catch(console.warn)
   }, [customOpenRouterModel])
 
+  // --- TTS Settings Persistence ---
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_tts_enabled', ttsEnabled).catch(console.warn)
+  }, [ttsEnabled, isLoading])
+
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_tts_api_url', ttsApiUrl).catch(console.warn)
+  }, [ttsApiUrl, isLoading])
+
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_tts_model_name', ttsModelName).catch(console.warn)
+  }, [ttsModelName, isLoading])
+
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_tts_auto_play', ttsAutoPlay).catch(console.warn)
+  }, [ttsAutoPlay, isLoading])
+
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_tts_dictionary', ttsDictionary).catch(console.warn)
+  }, [ttsDictionary, isLoading])
+
+  // --- Live2D Settings Persistence ---
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_live2d_enabled', live2dEnabled).catch(console.warn)
+  }, [live2dEnabled, isLoading])
+
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_live2d_model_path', live2dModelPath).catch(console.warn)
+  }, [live2dModelPath, isLoading])
+
 
 
 
