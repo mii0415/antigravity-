@@ -389,6 +389,7 @@ function App() {
       // Live2D Settings
       dbGet('antigravity_live2d_enabled').then(v => { if (v !== undefined) setLive2dEnabled(v) })
       dbGet('antigravity_live2d_model_path').then(v => { if (v) setLive2dModelPath(v) })
+      dbGet('antigravity_live2d_expression').then(v => { if (v) setCurrentExpression(v) })
     }
   }, [isLoading])
 
@@ -447,6 +448,13 @@ function App() {
       dbSet('antigravity_scheduled_notifications', scheduledNotificationsEnabled)
     }
   }, [scheduledNotificationsEnabled])
+
+  // Save Current Expression
+  useEffect(() => {
+    if (currentExpression) {
+      dbSet('antigravity_live2d_expression', currentExpression)
+    }
+  }, [currentExpression])
 
   // --- TIMER: Scheduled Notifications ---
   useEffect(() => {
