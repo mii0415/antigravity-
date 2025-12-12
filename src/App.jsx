@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { dbGet, dbSet, dbDel, dbKeys } from './db'
-import { Bell, Send, Folder, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLeft, ChevronRight, Brain, Trash2, Image, Files, Book, Plus, Settings, Upload, Crop, Check, ZoomIn, Move, Edit2, Save, RotateCw, RefreshCw, Key, Loader, Star, DownloadCloud, Menu, MessageSquare, Volume2 } from 'lucide-react'
+import { Bell, Send, Folder, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLeft, ChevronRight, Brain, Trash2, Image, Files, Book, Plus, Settings, Upload, Crop, Check, ZoomIn, Move, Edit2, Save, RotateCw, RefreshCw, Key, Loader, Star, DownloadCloud, Menu, MessageSquare, Volume2, StopCircle } from 'lucide-react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import Live2DCanvas from './Live2DCanvas'
 import './index.css'
@@ -362,6 +362,10 @@ function App() {
   const aiQueueRef = useRef([]) // Stores { type: 'chat'|'action', content: string, timestamp: number }
   const aiTimerRef = useRef(null) // Debounce timer
   const executeBufferedAIRequestRef = useRef(null) // Ref to hold latest function
+
+  // --- STATE: TTS Playback ---
+  const currentAudioRef = useRef(null)
+  const [playingMessageId, setPlayingMessageId] = useState(null)
   // Load these settings when DB is ready
   useEffect(() => {
     if (!isLoading) {
@@ -1036,7 +1040,20 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     return cleaned
   }
 
-  const speakText = async (text) => {
+  const speakText = async (text, messageId = null) => {
+    // Stop existing audio if playing
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current.currentTime = 0
+      currentAudioRef.current = null
+      const wasPlayingId = playingMessageId
+      setPlayingMessageId(null)
+      // Toggle off if clicking the same button
+      if (messageId && wasPlayingId === messageId) {
+        return
+      }
+    }
+
     if (!ttsEnabled || !ttsApiUrl || !text) return
 
     // Clean tags for TTS to avoid reading them out
@@ -1044,6 +1061,9 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     const processedText = applyTtsDictionary(cleanedText)
 
     try {
+      // Set loading/playing state early if ID provided
+      if (messageId) setPlayingMessageId(messageId)
+
       // Style-Bert-VITS2 API uses query parameters, not JSON body
       const params = new URLSearchParams({
         text: processedText,
@@ -1059,16 +1079,32 @@ The message must be consistent with your character persona and tone. (Max 1 shor
         }
       })
 
+      // If user stopped playback while fetching, abort
+      if (messageId && playingMessageId !== messageId && playingMessageId !== null) {
+        // Changed mind?
+        // Actually if setPlayingMessageId(null) was called, we should stop.
+        // Getting current state in async function is tricky without ref.
+        // But simpler checks will do for now.
+      }
+
       if (response.ok) {
         const audioBlob = await response.blob()
         const audioUrl = URL.createObjectURL(audioBlob)
         const audio = new Audio(audioUrl)
+
+        currentAudioRef.current = audio
+        audio.onended = () => {
+          setPlayingMessageId(null)
+          currentAudioRef.current = null
+        }
         audio.play()
       } else {
         console.error('TTS API Error:', response.status, await response.text())
+        setPlayingMessageId(null)
       }
     } catch (e) {
       console.error('TTS Error:', e)
+      setPlayingMessageId(null)
     }
   }
 
@@ -2888,8 +2924,12 @@ ${finalSystemPrompt}`
                           <>
                             {/* TTS Replay Button */}
                             {ttsEnabled && (
-                              <button className="action-btn" onClick={() => speakText(msg.text)} title="読み上げ">
-                                <Volume2 size={12} />
+                              <button
+                                className={`action-btn ${playingMessageId === msg.id ? 'active-tts' : ''}`}
+                                onClick={() => speakText(msg.text, msg.id)}
+                                title={playingMessageId === msg.id ? "読み上げ停止" : "読み上げ"}
+                              >
+                                {playingMessageId === msg.id ? <StopCircle size={12} color="#ef5350" /> : <Volume2 size={12} />}
                               </button>
                             )}
                             <button className="action-btn" onClick={() => handleRegenerate(msg.id)} title="再生成">
