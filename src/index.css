@@ -147,6 +147,8 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
+  /* 画像拡大時に枠内に収める */
 }
 
 .avatar.ai {
