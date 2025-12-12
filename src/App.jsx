@@ -545,94 +545,10 @@ function App() {
     loadSettings()
   }, [])
 
-  // --- TIMER: Scheduled Notifications ---
-  useEffect(() => {
-    if (!scheduledNotificationsEnabled) return
 
-    const checkTime = async () => {
-      const now = new Date()
-      const hour = now.getHours()
-      const minute = now.getMinutes()
+  // (Scheduled Notification useEffect moved to fixed TDZ issue)
 
-      // Target times: 7:00, 12:00, 22:00
-      const targets = [7, 12, 22]
 
-      // 00分〜01分の間に実行 (1分間隔チェックなので漏らさないように)
-      if (targets.includes(hour) && minute <= 1) {
-        const key = `${now.toDateString()}-${hour}`
-
-        // まだ送信していない場合のみ
-        if (lastNotificationTime.current !== key) {
-          // まずマークして二重送信防止
-          lastNotificationTime.current = key
-
-          // 権限確認
-          if (Notification.permission === "granted") {
-            try {
-              // Generate Message
-              const timeStr = `${hour}:00`
-              let timeContext = ''
-              if (hour === 7) timeContext = '(Morning, Wake up)'
-              if (hour === 12) timeContext = '(Lunch time)'
-              if (hour === 22) timeContext = '(Night, Sleep time soon)'
-
-              const promptText = `Current time is ${timeStr} ${timeContext}. The user is not looking at the screen. Send a short push notification greeting to the user. (e.g. Good morning!, It's lunch time!, Good night). Keep it under 40 characters. Speak in character.`
-
-              // Use Gemini 2.5 Flash as requested (2025 Standard)
-              const apiKey = await dbGet('antigravity_gemini_key') || ''
-              if (apiKey) {
-                const genAI = new GoogleGenerativeAI(apiKey)
-                const model = genAI.getGenerativeModel({
-                  model: 'gemini-2.5-flash',
-                  systemInstruction: activeProfile.systemPrompt
-                })
-
-                const result = await model.generateContent(promptText)
-                const responseText = result.response.text()
-
-                if (responseText) {
-                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
-                  if (cleanText) {
-                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
-                    n.onclick = (e) => {
-                      e.preventDefault(); // Prevent browser default handling if any
-                      window.focus();
-                      console.log('Notification clicked (Gemini key). Creating session with:', cleanText);
-                      handleCreateSession(cleanText);
-                      n.close();
-                    };
-                  }
-                }
-              } else if (selectedModel.startsWith('gemini')) {
-                // Fallback to existing logic if NO key but Gemini is selected
-                // (Assuming callGeminiAPI handles something or just fail gracefully)
-                let responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
-                if (responseText) {
-                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
-                  if (cleanText) {
-                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
-                    n.onclick = (e) => {
-                      e.preventDefault();
-                      window.focus();
-                      console.log('Notification clicked (Fallback). Creating session with:', cleanText);
-                      handleCreateSession(cleanText);
-                      n.close();
-                    };
-                  }
-                }
-              }
-            } catch (e) {
-              console.error("Scheduled Notification Error", e)
-            }
-          }
-        }
-      }
-    }
-
-    const interval = setInterval(checkTime, 60000) // 60s check
-    checkTime() // initial check
-    return () => clearInterval(interval)
-  }, [scheduledNotificationsEnabled, activeProfile, selectedModel, handleCreateSession])
 
   // --- STATE: Settings UI Toggles ---
   const [isBackgroundsOpen, setIsBackgroundsOpen] = useState(false)
@@ -756,6 +672,188 @@ function App() {
   }
 
 
+
+
+  // --- TIMER: Scheduled Notifications ---
+  // Moved here to ensure handleCreateSession is defined (TDZ fix)
+  useEffect(() => {
+    if (!scheduledNotificationsEnabled) return
+
+    const checkTime = async () => {
+      const now = new Date()
+      const hour = now.getHours()
+      const minute = now.getMinutes()
+
+      // Target times: 7:00, 12:00, 22:00
+      const targets = [7, 12, 22]
+
+      // 00分〜01分の間に実行 (1分間隔チェックなので漏らさないように)
+      if (targets.includes(hour) && minute <= 1) {
+        const key = `${now.toDateString()}-${hour}`
+
+        // まだ送信していない場合のみ
+        if (lastNotificationTime.current !== key) {
+          // まずマークして二重送信防止
+          lastNotificationTime.current = key
+
+          // 権限確認
+          if (Notification.permission === "granted") {
+            try {
+              // Generate Message
+              const timeStr = `${hour}:00`
+              let timeContext = ''
+              if (hour === 7) timeContext = '(Morning, Wake up)'
+              if (hour === 12) timeContext = '(Lunch time)'
+              if (hour === 22) timeContext = '(Night, Sleep time soon)'
+
+              const promptText = `Current time is ${timeStr} ${timeContext}. The user is not looking at the screen. Send a short push notification greeting to the user. (e.g. Good morning!, It's lunch time!, Good night). Keep it under 40 characters. Speak in character.`
+
+              // Use Gemini 2.5 Flash as requested (2025 Standard)
+              const apiKey = await dbGet('antigravity_gemini_key') || ''
+              if (apiKey) {
+                const genAI = new GoogleGenerativeAI(apiKey)
+                const model = genAI.getGenerativeModel({
+                  model: 'gemini-2.5-flash',
+                  systemInstruction: activeProfile.systemPrompt
+                })
+
+                const result = await model.generateContent(promptText)
+                const responseText = result.response.text()
+
+                if (responseText) {
+                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
+                  if (cleanText) {
+                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                    n.onclick = (e) => {
+                      e.preventDefault(); // Prevent browser default handling if any
+                      window.focus();
+                      console.log('Notification clicked (Gemini key). Creating session with:', cleanText);
+                      handleCreateSession(cleanText);
+                      n.close();
+                    };
+                  }
+                }
+              } else if (selectedModel.startsWith('gemini')) {
+                // Fallback to existing logic if NO key but Gemini is selected
+                // (Assuming callGeminiAPI handles something or just fail gracefully)
+                let responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
+                if (responseText) {
+                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
+                  if (cleanText) {
+                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                    n.onclick = (e) => {
+                      e.preventDefault();
+                      window.focus();
+                      console.log('Notification clicked (Fallback). Creating session with:', cleanText);
+                      handleCreateSession(cleanText);
+                      n.close();
+                    };
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('Notification Error:', e)
+            }
+          }
+        }
+      }
+    }
+
+    const interval = setInterval(checkTime, 60000) // 60s check
+    checkTime() // initial check
+    return () => clearInterval(interval)
+  }, [scheduledNotificationsEnabled, activeProfile, selectedModel, handleCreateSession])
+
+
+  // --- TIMER: Scheduled Notifications ---
+  // Moved here to ensure handleCreateSession is defined (TDZ fix)
+  useEffect(() => {
+    if (!scheduledNotificationsEnabled) return
+
+    const checkTime = async () => {
+      const now = new Date()
+      const hour = now.getHours()
+      const minute = now.getMinutes()
+
+      // Target times: 7:00, 12:00, 22:00
+      const targets = [7, 12, 22]
+
+      // 00分〜01分の間に実行 (1分間隔チェックなので漏らさないように)
+      if (targets.includes(hour) && minute <= 1) {
+        const key = `${now.toDateString()}-${hour}`
+
+        // まだ送信していない場合のみ
+        if (lastNotificationTime.current !== key) {
+          // まずマークして二重送信防止
+          lastNotificationTime.current = key
+
+          // 権限確認
+          if (Notification.permission === "granted") {
+            try {
+              // Generate Message
+              const timeStr = `${hour}:00`
+              let timeContext = ''
+              if (hour === 7) timeContext = '(Morning, Wake up)'
+              if (hour === 12) timeContext = '(Lunch time)'
+              if (hour === 22) timeContext = '(Night, Sleep time soon)'
+
+              const promptText = `Current time is ${timeStr} ${timeContext}. The user is not looking at the screen. Send a short push notification greeting to the user. (e.g. Good morning!, It's lunch time!, Good night). Keep it under 40 characters. Speak in character.`
+
+              // Use Gemini 2.5 Flash as requested (2025 Standard)
+              const apiKey = await dbGet('antigravity_gemini_key') || ''
+              if (apiKey) {
+                const genAI = new GoogleGenerativeAI(apiKey)
+                const model = genAI.getGenerativeModel({
+                  model: 'gemini-2.5-flash',
+                  systemInstruction: activeProfile.systemPrompt
+                })
+
+                const result = await model.generateContent(promptText)
+                const responseText = result.response.text()
+
+                if (responseText) {
+                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
+                  if (cleanText) {
+                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                    n.onclick = (e) => {
+                      e.preventDefault(); // Prevent browser default handling if any
+                      window.focus();
+                      console.log('Notification clicked (Gemini key). Creating session with:', cleanText);
+                      handleCreateSession(cleanText);
+                      n.close();
+                    };
+                  }
+                }
+              } else if (selectedModel.startsWith('gemini')) {
+                // Fallback to existing logic if NO key but Gemini is selected
+                // (Assuming callGeminiAPI handles something or just fail gracefully)
+                let responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
+                if (responseText) {
+                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
+                  if (cleanText) {
+                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                    n.onclick = (e) => {
+                      e.preventDefault();
+                      window.focus();
+                      console.log('Notification clicked (Fallback). Creating session with:', cleanText);
+                      handleCreateSession(cleanText);
+                      n.close();
+                    };
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("Scheduled Notification Error", e)
+            }
+          }
+        }
+      }
+    }
+
+    const interval = setInterval(checkTime, 60000) // 60s check
+    checkTime() // initial check
+    return () => clearInterval(interval)
+  }, [scheduledNotificationsEnabled, activeProfile, selectedModel, handleCreateSession])
 
   // --- EFFECT: Saves for New Settings ---
   useEffect(() => {
