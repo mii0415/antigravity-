@@ -14,7 +14,8 @@ const Live2DCanvas = forwardRef(({
     onModelLoad,
     onModelError,
     onHitAreaTap,
-    onLongPress  // NEW: Long press callback
+    onLongPress,  // NEW: Long press callback
+    currentExpression // NEW: Accept expression as prop for reactivity
 }, ref) => {
     const canvasRef = useRef(null)
     const appRef = useRef(null)
@@ -317,6 +318,43 @@ const Live2DCanvas = forwardRef(({
             appRef.current = null
         }
     }, [modelPath, width, height])
+
+    // Reactively update expression when prop or model changes
+    useEffect(() => {
+        if (currentExpression && modelRef.current) {
+            console.log('🎭 Prop update: Applying expression:', currentExpression)
+            // Use internal helper or verify method availability
+            // Since setExpression is defined in useImperativeHandle, we can't call it directly from here easily
+            // unless we define it outside or duplicate logic.
+            // Duplicating core logic for safety:
+            try {
+                modelRef.current.expression(currentExpression)
+
+                // Motion logic (simplified)
+                const innerModel = modelRef.current.internalModel
+                const motionManager = innerModel.motionManager
+                const definitions = (motionManager && motionManager.definitions) || (innerModel.settings && innerModel.settings.motions)
+
+                if (definitions) {
+                    let foundGroup = null, foundIndex = -1
+                    for (const group of Object.keys(definitions)) {
+                        const list = definitions[group]
+                        if (!Array.isArray(list)) continue;
+                        const idx = list.findIndex(def => {
+                            const path = def.File || def.file || ''
+                            return path.toLowerCase().includes(currentExpression.toLowerCase() + '.motion3.json')
+                        })
+                        if (idx !== -1) { foundGroup = group; foundIndex = idx; break; }
+                    }
+                    if (foundIndex !== -1) {
+                        modelRef.current.motion(foundGroup, foundIndex, 3)
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to apply expression from prop:', e)
+            }
+        }
+    }, [currentExpression, debugInfo.status]) // debugInfo.status 'Loaded' triggers this too
 
     return (
         <div

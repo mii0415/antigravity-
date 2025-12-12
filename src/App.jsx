@@ -2956,6 +2956,7 @@ ${finalSystemPrompt}`
                     onModelError={(err) => console.error('Live2D error:', err)}
                     onHitAreaTap={handleLive2DTap}
                     onLongPress={handleLive2DLongPress}
+                    currentExpression={currentExpression} // Pass state for persistence
                   />
                   {/* Debug overlay for mobile testing */}
                   <div style={{
