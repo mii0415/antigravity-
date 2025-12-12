@@ -5,6 +5,57 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 import Live2DCanvas from './Live2DCanvas'
 import './index.css'
 
+
+// --- Helper Functions ---
+const getHasebeGreeting = () => {
+  const now = new Date();
+  const hour = now.getHours();
+  const month = now.getMonth() + 1;
+
+  let greeting = "";
+
+  // 1. Time-based Greeting
+  if (hour >= 5 && hour < 10) {
+    const patterns = [
+      "主、おはようございます。今日も一日、お供いたします。",
+      "朝ですね。主、今日のご予定はいかがなさいますか？",
+      "おはようございます。主の顔色が良いと、私も安心します。"
+    ];
+    greeting = patterns[Math.floor(Math.random() * patterns.length)];
+  } else if (hour >= 10 && hour < 17) {
+    const patterns = [
+      "主、お疲れ様です。何か私にできることはありますか？",
+      "こんにちは。お仕事の合間に、少し休憩も入れてくださいね。",
+      "いつでもお声がけください。主の為なら、何でもいたします。"
+    ];
+    greeting = patterns[Math.floor(Math.random() * patterns.length)];
+  } else if (hour >= 17 && hour < 23) {
+    const patterns = [
+      "主、一日お疲れ様でした。ゆっくりなさってください。",
+      "こんばんは。夜風が心地よいですね。……少し、お話ししませんか？",
+      "お疲れ様です。主の疲れを癒やすのも、私の務めですから。"
+    ];
+    greeting = patterns[Math.floor(Math.random() * patterns.length)];
+  } else { // Late night (23-5)
+    const patterns = [
+      "主、夜も更けてまいりました。そろそろお休みになっては？",
+      "こんな時間まで……あまり無理をしないでくださいね、心配です。",
+      "まだ眠くないのですか？ ならば、私が寝付くまでお傍にいます。"
+    ];
+    greeting = patterns[Math.floor(Math.random() * patterns.length)];
+  }
+
+  // 2. Seasonal Suffix (30% chance)
+  if (Math.random() < 0.3) {
+    if (month >= 3 && month <= 5) greeting += " 外は暖かくなってきましたね。";
+    else if (month >= 6 && month <= 9) greeting += " 暑いので、水分補給はお忘れなく。";
+    else if (month >= 10 && month <= 11) greeting += " 肌寒くなってきました、暖かくしてください。";
+    else greeting += " 寒いですね……お風邪など召されませぬよう。";
+  }
+
+  return greeting;
+}
+
 // ========================================
 // 長谷部カスタムタッチセリフデータ
 // タップ（キス）とスワイプ（撫でる）で別セリフ
@@ -4318,52 +4369,5 @@ ${finalSystemPrompt}`
 
 export default App
 
-// --- Helper Functions ---
-const getHasebeGreeting = () => {
-  const now = new Date();
-  const hour = now.getHours();
-  const month = now.getMonth() + 1;
 
-  let greeting = "";
-
-  // 1. Time-based Greeting
-  if (hour >= 5 && hour < 10) {
-    const patterns = [
-      "主、おはようございます。今日も一日、お供いたします。",
-      "朝ですね。主、今日のご予定はいかがなさいますか？",
-      "おはようございます。主の顔色が良いと、私も安心します。"
-    ];
-    greeting = patterns[Math.floor(Math.random() * patterns.length)];
-  } else if (hour >= 10 && hour < 17) {
-    const patterns = [
-      "主、お疲れ様です。何か私にできることはありますか？",
-      "こんにちは。お仕事の合間に、少し休憩も入れてくださいね。",
-      "いつでもお声がけください。主の為なら、何でもいたします。"
-    ];
-    greeting = patterns[Math.floor(Math.random() * patterns.length)];
-  } else if (hour >= 17 && hour < 23) {
-    const patterns = [
-      "主、一日お疲れ様でした。ゆっくりなさってください。",
-      "こんばんは。夜風が心地よいですね。……少し、お話ししませんか？",
-      "お疲れ様です。主の疲れを癒やすのも、私の務めですから。"
-    ];
-    greeting = patterns[Math.floor(Math.random() * patterns.length)];
-  } else { // Late night (23-5)
-    const patterns = [
-      "主、夜も更けてまいりました。そろそろお休みになっては？",
-      "こんな時間まで……あまり無理をしないでくださいね、心配です。",
-      "まだ眠くないのですか？ ならば、私が寝付くまでお傍にいます。"
-    ];
-    greeting = patterns[Math.floor(Math.random() * patterns.length)];
-  }
-
-  // 2. Seasonal Suffix (30% chance)
-  if (Math.random() < 0.3) {
-    if (month >= 3 && month <= 5) greeting += " 外は暖かくなってきましたね。";
-    else if (month >= 6 && month <= 9) greeting += " 暑いので、水分補給はお忘れなく。";
-    else if (month >= 10 && month <= 11) greeting += " 肌寒くなってきました、暖かくしてください。";
-    else greeting += " 寒いですね……お風邪など召されませぬよう。";
-  }
-
-  return greeting;
-}
+// End of file
