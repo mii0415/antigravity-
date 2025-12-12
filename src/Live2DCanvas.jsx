@@ -233,8 +233,61 @@ const Live2DCanvas = forwardRef(({
                 // Add model to stage
                 app.stage.addChild(model)
 
-                // Start idle blink animation if available
-                // Model will handle this automatically if physics is set up
+                // --- Auto Blink Logic ---
+                // Manually handle blinking since autoInteract is false and model settings vary
+                const blinkState = {
+                    state: 'open', // open, closing, closed, opening
+                    startTime: 0,
+                    duration: 150, // total blink duration in ms
+                    nextBlinkTime: Date.now() + Math.random() * 3000 + 2000
+                }
+
+                // Add blinking to Pixi ticker
+                app.ticker.add(() => {
+                    // Safety check
+                    if (!model || !model.internalModel || !model.internalModel.coreModel) return
+
+                    const now = Date.now()
+
+                    // 1. Decide when to blink
+                    if (blinkState.state === 'open' && now > blinkState.nextBlinkTime) {
+                        blinkState.state = 'closing'
+                        blinkState.startTime = now
+                    }
+
+                    // 2. Animate loop
+                    let value = 1.0
+
+                    if (blinkState.state === 'closing') {
+                        const t = (now - blinkState.startTime) / (blinkState.duration / 2)
+                        value = 1.0 - t
+                        if (value <= 0) {
+                            value = 0
+                            blinkState.state = 'opening'
+                            blinkState.startTime = now
+                        }
+                    } else if (blinkState.state === 'opening') {
+                        const t = (now - blinkState.startTime) / (blinkState.duration / 2)
+                        value = t
+                        if (value >= 1.0) {
+                            value = 1.0
+                            blinkState.state = 'open'
+                            blinkState.nextBlinkTime = now + Math.random() * 3000 + 3000 // 3-6s interval
+                        }
+                    } else {
+                        // Keep open otherwise
+                        value = 1.0
+                    }
+
+                    // 3. Apply to model parameters (Cubism 3/4 IDs)
+                    const core = model.internalModel.coreModel
+                    const eyeL = core.getParameterIndex('ParamEyeLOpen')
+                    const eyeR = core.getParameterIndex('ParamEyeROpen')
+
+                    // Force parameter update
+                    if (eyeL >= 0) core.setParameterValueByIndex(eyeL, value)
+                    if (eyeR >= 0) core.setParameterValueByIndex(eyeR, value)
+                })
 
                 if (onModelLoad) {
                     onModelLoad(model)
