@@ -2158,8 +2158,8 @@ Response must be short (under 30 chars). ${tagInstruction}`
         // 甘い段階
         targetIndex = Math.min(emotionKeys.length - 1, 1)
       } else {
-        // 通常段階
-        targetIndex = 0
+        // 通常レベルでもランダムに表情を変える
+        targetIndex = Math.floor(Math.random() * emotionKeys.length)
       }
 
       setCurrentEmotion(emotionKeys[targetIndex])
@@ -2244,7 +2244,8 @@ Response must be short (under 30 chars). ${tagInstruction}`
       } else if (newCount >= 4) {
         targetIndex = Math.min(emotionKeys.length - 1, 1) // 2nd image
       } else {
-        targetIndex = 0 // 1st image
+        // 通常レベルでもランダムに表情を変える（ユーザー要望）
+        targetIndex = Math.floor(Math.random() * emotionKeys.length)
       }
       chosenEmotionKey = emotionKeys[targetIndex]
     }
@@ -2333,7 +2334,8 @@ Response must be short (under 30 chars). ${tagInstruction}`
       } else if (newCount >= 4) {
         targetIndex = Math.min(emotionKeys.length - 1, 1)
       } else {
-        targetIndex = 0
+        // 通常レベルでもランダムに
+        targetIndex = Math.floor(Math.random() * emotionKeys.length)
       }
       chosenEmotionKey = emotionKeys[targetIndex]
     }
