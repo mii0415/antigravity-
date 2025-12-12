@@ -461,9 +461,19 @@ function App() {
   }, [scheduledNotificationsEnabled])
 
   // Save Current Expression
+  // Save & Apply Current Expression
   useEffect(() => {
     if (currentExpression) {
       dbSet('antigravity_live2d_expression', currentExpression)
+
+      // Apply to Live2D model if ready (fixes reload reset issue)
+      if (live2dRef.current) {
+        try {
+          live2dRef.current.setExpression(currentExpression)
+        } catch (e) {
+          console.warn('Failed to restore expression:', e)
+        }
+      }
     }
   }, [currentExpression])
 
