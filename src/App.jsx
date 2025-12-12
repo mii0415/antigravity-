@@ -541,13 +541,15 @@ function App() {
 
                 if (responseText) {
                   const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
-                  const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
-                  n.onclick = () => {
-                    window.focus()
-                    if (handleCreateSessionRef.current) {
-                      handleCreateSessionRef.current(cleanText)
-                    }
-                    n.close()
+                  if (cleanText) {
+                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                    n.onclick = (e) => {
+                      e.preventDefault(); // Prevent browser default handling if any
+                      window.focus();
+                      console.log('Notification clicked (Gemini key). Creating session with:', cleanText);
+                      handleCreateSession(cleanText);
+                      n.close();
+                    };
                   }
                 }
               } else if (selectedModel.startsWith('gemini')) {
@@ -556,13 +558,15 @@ function App() {
                 let responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
                 if (responseText) {
                   const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
-                  const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
-                  n.onclick = () => {
-                    window.focus()
-                    if (handleCreateSessionRef.current) {
-                      handleCreateSessionRef.current(cleanText)
-                    }
-                    n.close()
+                  if (cleanText) {
+                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                    n.onclick = (e) => {
+                      e.preventDefault();
+                      window.focus();
+                      console.log('Notification clicked (Fallback). Creating session with:', cleanText);
+                      handleCreateSession(cleanText);
+                      n.close();
+                    };
                   }
                 }
               }
@@ -577,7 +581,7 @@ function App() {
     const interval = setInterval(checkTime, 60000) // 60s check
     checkTime() // initial check
     return () => clearInterval(interval)
-  }, [scheduledNotificationsEnabled, activeProfile, selectedModel])
+  }, [scheduledNotificationsEnabled, activeProfile, selectedModel, handleCreateSession])
 
   // --- STATE: Settings UI Toggles ---
   const [isBackgroundsOpen, setIsBackgroundsOpen] = useState(false)
@@ -637,8 +641,7 @@ function App() {
 
   const messagesEndRef = useRef(null)
 
-  // Ref to access handleCreateSession inside checkTime callback without dependency issues
-  const handleCreateSessionRef = useRef(null)
+  // handleCreateSessionRef removed, using dependency array instead
 
 
   // --- EFFECT: Saves ---
@@ -654,6 +657,7 @@ function App() {
   }, [messages])
 
   // --- ACTIONS: Session Management ---
+  // getHasebeGreeting moved outside component
   const getHasebeGreeting = () => {
     const now = new Date();
     const hour = now.getHours();
@@ -703,7 +707,8 @@ function App() {
     return greeting;
   }
 
-  const handleCreateSession = (initialText = null) => {
+  const handleCreateSession = useCallback((initialText = null) => {
+    console.log('Using handleCreateSession with:', initialText)
     const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `session_${Date.now()}_${Math.random().toString(36).slice(2)}`
     const newSession = { id: newId, title: initialText ? (initialText.slice(0, 15) + '...') : '新しいチャット', lastUpdated: Date.now() }
 
@@ -713,10 +718,9 @@ function App() {
     const firstMessage = initialText || getHasebeGreeting()
     setMessages([{ id: Date.now(), sender: 'ai', text: firstMessage, emotion: 'joy' }])
     setIsFolderOpen(false) // Close sidebar on mobile after selection if needed
-  }
+  }, [setSessions, setActiveSessionId, setMessages, setIsFolderOpen])
 
-  // Update ref for checkTime access
-  useEffect(() => { handleCreateSessionRef.current = handleCreateSession })
+  // Ref update removed
 
 
   const handleSwitchSession = async (sessionId) => {
@@ -4313,3 +4317,53 @@ ${finalSystemPrompt}`
 }
 
 export default App
+
+// --- Helper Functions ---
+const getHasebeGreeting = () => {
+  const now = new Date();
+  const hour = now.getHours();
+  const month = now.getMonth() + 1;
+
+  let greeting = "";
+
+  // 1. Time-based Greeting
+  if (hour >= 5 && hour < 10) {
+    const patterns = [
+      "主、おはようございます。今日も一日、お供いたします。",
+      "朝ですね。主、今日のご予定はいかがなさいますか？",
+      "おはようございます。主の顔色が良いと、私も安心します。"
+    ];
+    greeting = patterns[Math.floor(Math.random() * patterns.length)];
+  } else if (hour >= 10 && hour < 17) {
+    const patterns = [
+      "主、お疲れ様です。何か私にできることはありますか？",
+      "こんにちは。お仕事の合間に、少し休憩も入れてくださいね。",
+      "いつでもお声がけください。主の為なら、何でもいたします。"
+    ];
+    greeting = patterns[Math.floor(Math.random() * patterns.length)];
+  } else if (hour >= 17 && hour < 23) {
+    const patterns = [
+      "主、一日お疲れ様でした。ゆっくりなさってください。",
+      "こんばんは。夜風が心地よいですね。……少し、お話ししませんか？",
+      "お疲れ様です。主の疲れを癒やすのも、私の務めですから。"
+    ];
+    greeting = patterns[Math.floor(Math.random() * patterns.length)];
+  } else { // Late night (23-5)
+    const patterns = [
+      "主、夜も更けてまいりました。そろそろお休みになっては？",
+      "こんな時間まで……あまり無理をしないでくださいね、心配です。",
+      "まだ眠くないのですか？ ならば、私が寝付くまでお傍にいます。"
+    ];
+    greeting = patterns[Math.floor(Math.random() * patterns.length)];
+  }
+
+  // 2. Seasonal Suffix (30% chance)
+  if (Math.random() < 0.3) {
+    if (month >= 3 && month <= 5) greeting += " 外は暖かくなってきましたね。";
+    else if (month >= 6 && month <= 9) greeting += " 暑いので、水分補給はお忘れなく。";
+    else if (month >= 10 && month <= 11) greeting += " 肌寒くなってきました、暖かくしてください。";
+    else greeting += " 寒いですね……お風邪など召されませぬよう。";
+  }
+
+  return greeting;
+}
