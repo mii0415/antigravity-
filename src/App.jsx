@@ -2167,10 +2167,12 @@ Response must be short (under 30 chars). ${tagInstruction}`
     const selectedText = levelData[randomIndex]
 
     // チャットに追加
+    // チャットに追加
     const touchMessage = {
       id: Date.now(),
       sender: 'ai',
       text: selectedText,
+      emotion: expressionName, // Use Live2D expression as emotion key
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
@@ -2238,6 +2240,7 @@ Response must be short (under 30 chars). ${tagInstruction}`
       id: Date.now(),
       sender: 'ai',
       text: selectedText,
+      emotion: expressionName, // Use Live2D expression
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
@@ -2286,10 +2289,29 @@ Response must be short (under 30 chars). ${tagInstruction}`
     const randomIndex = Math.floor(Math.random() * levelData.length)
     const selectedText = levelData[randomIndex]
 
+    // タッチ回数に応じて表情を変更（ファイル名ベース・PCはタップ扱い）
+    // Logic moved before setMessages to use emotionKey
+    const emotionKeys = Object.keys(activeProfile?.emotions || {})
+    let chosenEmotionKey = null
+
+    if (emotionKeys.length > 0) {
+      let targetIndex = 0
+      if (newCount >= 7) {
+        targetIndex = Math.min(emotionKeys.length - 1, 2)
+      } else if (newCount >= 4) {
+        targetIndex = Math.min(emotionKeys.length - 1, 1)
+      } else {
+        targetIndex = 0
+      }
+      chosenEmotionKey = emotionKeys[targetIndex]
+      setCurrentEmotion(chosenEmotionKey)
+    }
+
     const touchMessage = {
       id: Date.now(),
       sender: 'ai',
       text: selectedText,
+      emotion: chosenEmotionKey, // Use calculated emotion key
       profile: {
         name: activeProfile?.name || 'AI',
         iconImage: activeProfile?.iconImage,
@@ -2301,22 +2323,6 @@ Response must be short (under 30 chars). ${tagInstruction}`
     // TTS: Read aloud the response if enabled
     if (ttsAutoPlay) {
       speakText(selectedText)
-    }
-
-    // タッチ回数に応じて表情を変更（ファイル名ベース・PCはタップ扱い）
-    const emotionKeys = Object.keys(activeProfile?.emotions || {})
-    if (emotionKeys.length > 0) {
-      let targetIndex = 0
-
-      if (newCount >= 7) {
-        targetIndex = Math.min(emotionKeys.length - 1, 2)
-      } else if (newCount >= 4) {
-        targetIndex = Math.min(emotionKeys.length - 1, 1)
-      } else {
-        targetIndex = 0
-      }
-
-      setCurrentEmotion(emotionKeys[targetIndex])
     }
   }
 
@@ -2334,9 +2340,12 @@ Response must be short (under 30 chars). ${tagInstruction}`
       const genAI = new GoogleGenerativeAI(cleanKey)
 
       let finalSystemPrompt = systemPrompt
-      // Visual Novel Mode Instruction
-      if (uiMode === 'visual_novel') {
+      // Visual Novel Mode Instruction OR if Emotions/Live2D active
+      const hasEmotions = activeProfile.emotions && Object.keys(activeProfile.emotions).length > 0
+
+      if (uiMode === 'visual_novel' || live2dEnabled || hasEmotions) {
         if (live2dEnabled) {
+          // Live2D mode
           finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode' with Live2D.
 1. You MUST prefix your response with a single emotion tag.
 2. Available tags: [Love], [Joy], [Anger], [Sorrow], [Fun], [Surprise], [Neutral].
@@ -2344,8 +2353,12 @@ Response must be short (under 30 chars). ${tagInstruction}`
 4. Use consistent English tags.`
         } else {
           const emoKeys = Object.keys(activeProfile.emotions || {}).map(k => `[${k}]`).join(', ')
-          finalSystemPrompt += `\n[System Note]: You are in 'Visual Novel Mode'.
-1. You MUST prefix your response with a single emotion tag from this list: ${emoKeys || '(No emotions available, use [Normal])'}.
+          const tagInstruction = hasEmotions ?
+            `emotion tag from this list: ${emoKeys}` :
+            `emotion tag like [Joy], [Anger], [Love], [Sadness]`
+
+          finalSystemPrompt += `\n[System Note]: 
+1. You MUST prefix your response with a single ${tagInstruction}.
 2. Example: [Joy] "Hello!"
 3. To change the background, use [BG: LocationName].`
         }
