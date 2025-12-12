@@ -359,6 +359,7 @@ function App() {
   const [live2dModelPath, setLive2dModelPath] = useState('./長谷部第四弾4001フリー/長谷部第四弾4001フリー.model3.json')
   const live2dRef = useRef(null)
   const [currentExpression, setCurrentExpression] = useState('neutral')
+  const [isExpressionLoaded, setIsExpressionLoaded] = useState(false) // Guard to prevent overwriting DB with default on init
   const currentExpressionRef = useRef('neutral') // Ref to access latest state in callbacks
   useEffect(() => { currentExpressionRef.current = currentExpression }, [currentExpression])
   const [lastAIResponse, setLastAIResponse] = useState('') // For debugging
@@ -465,6 +466,8 @@ function App() {
   // Save Current Expression
   // Save & Apply Current Expression
   useEffect(() => {
+    if (!isExpressionLoaded) return // Don't save default 'neutral' before we've loaded the saved one
+
     if (currentExpression) {
       dbSet('antigravity_live2d_expression', currentExpression)
 
@@ -477,7 +480,19 @@ function App() {
         }
       }
     }
-  }, [currentExpression])
+  }, [currentExpression, isExpressionLoaded])
+
+  // Load persistence data
+  useEffect(() => {
+    const loadSettings = async () => {
+      const savedExpr = await dbGet('antigravity_live2d_expression')
+      if (savedExpr) {
+        setCurrentExpression(savedExpr)
+      }
+      setIsExpressionLoaded(true) // Enable saving from now on
+    }
+    loadSettings()
+  }, [])
 
   // --- TIMER: Scheduled Notifications ---
   useEffect(() => {
