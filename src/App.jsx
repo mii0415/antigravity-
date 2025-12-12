@@ -264,19 +264,22 @@ function App() {
 
   // --- EFFECT: Persist Sessions Metadata ---
   useEffect(() => {
-    if (sessions.length > 0) {
+    if (!isLoading && sessions.length > 0) {
       dbSet('antigravity_sessions', sessions).catch(e => console.warn('Failed to save sessions', e))
     }
-  }, [sessions])
+  }, [sessions, isLoading])
 
   // --- EFFECT: Persist Active Session ID ---
   useEffect(() => {
-    dbSet('antigravity_active_session_id', activeSessionId).catch(console.warn)
-  }, [activeSessionId])
+    if (!isLoading) {
+      dbSet('antigravity_active_session_id', activeSessionId).catch(console.warn)
+    }
+  }, [activeSessionId, isLoading])
 
   // --- EFFECT: Persist Messages to Active Session ---
+  // --- EFFECT: Persist Messages to Active Session ---
   useEffect(() => {
-    if (messages.length > 0 || activeSessionId) {
+    if (!isLoading && (messages.length > 0 || activeSessionId)) {
       dbSet(`antigravity_chat_${activeSessionId}`, messages).catch(e => {
         console.error('Message Save Failed:', e)
         if (e.name === 'QuotaExceededError') {
@@ -284,7 +287,7 @@ function App() {
         }
       })
     }
-  }, [messages, activeSessionId])
+  }, [messages, activeSessionId, isLoading])
 
   const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash')
   useEffect(() => {
