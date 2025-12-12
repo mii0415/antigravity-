@@ -648,8 +648,9 @@ function App() {
 
     setActiveSessionId(newId)
     setMessages(initialMessages) // Local update
+    setCurrentExpression('neutral') // Reset Live2D expression to default
     setIsFolderOpen(false) // Close sidebar on mobile after selection if needed
-  }, [setSessions, setActiveSessionId, setMessages, setIsFolderOpen])
+  }, [setSessions, setActiveSessionId, setMessages, setIsFolderOpen, setCurrentExpression])
 
   // Ref update removed
 
