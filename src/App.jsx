@@ -1055,27 +1055,31 @@ The message must be consistent with your character persona and tone. (Max 1 shor
   }
 
   const speakText = async (text, messageId = null) => {
-    // Stop existing audio if playing
+    // Simply stop existing audio if new one is requested
     if (currentAudioRef.current) {
       currentAudioRef.current.pause()
       currentAudioRef.current.currentTime = 0
       currentAudioRef.current = null
+
       const wasPlayingId = playingMessageId
       setPlayingMessageId(null)
-      // Toggle off if clicking the same button
+
+      // If clicking same button, just toggle off (stop) and return
       if (messageId && wasPlayingId === messageId) {
         return
       }
     }
 
-    if (!ttsEnabled || !ttsApiUrl || !text) return
+    if (!ttsEnabled || !ttsApiUrl || !text) {
+      console.warn('TTS Skipped:', { ttsEnabled, ttsApiUrl, text })
+      return
+    }
 
-    // Clean tags for TTS to avoid reading them out
+    // Clean tags for TTS
     const cleanedText = cleanResponseText(text)
     const processedText = applyTtsDictionary(cleanedText)
 
     try {
-      // Set loading/playing state early if ID provided
       if (messageId) setPlayingMessageId(messageId)
 
       // Style-Bert-VITS2 API uses query parameters, not JSON body
