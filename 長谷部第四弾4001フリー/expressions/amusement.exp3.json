@@ -13,12 +13,12 @@
 		},
 		{
 			"Id": "ParamEyeLSmile",
-			"Value": 1,
+			"Value": 0,
 			"Blend": "Add"
 		},
 		{
 			"Id": "ParamEyeRSmile",
-			"Value": 1,
+			"Value": 0,
 			"Blend": "Add"
 		},
 		{

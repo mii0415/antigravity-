@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live2D 表情プレビュー（Motion版）</title>
+    <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.x/dist/pixi.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/index.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            overflow-y: auto;
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar h2 {
+            margin-bottom: 10px;
+            font-size: 18px;
+            color: #00d4ff;
+        }
+
+        .sidebar p {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 15px;
+        }
+
+        .expression-btn {
+            display: block;
+            width: 100%;
+            padding: 12px 15px;
+            margin-bottom: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #fff;
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+
+        .expression-btn:hover {
+            background: rgba(0, 212, 255, 0.3);
+            border-color: #00d4ff;
+            transform: translateX(5px);
+        }
+
+        .expression-btn.active {
+            background: rgba(0, 212, 255, 0.5);
+            border-color: #00d4ff;
+        }
+
+        .expression-btn.problem {
+            background: rgba(255, 100, 100, 0.3);
+            border-color: #ff6464;
+        }
+
+        .expression-btn .jp {
+            display: block;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 3px;
+        }
+
+        .canvas-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        #canvas {
+            background: linear-gradient(180deg, #2a2a4a 0%, #1a1a2e 100%);
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .current-expression {
+            position: absolute;
+            top: 30px;
+            background: rgba(0, 212, 255, 0.2);
+            padding: 15px 30px;
+            border-radius: 30px;
+            border: 1px solid #00d4ff;
+            font-size: 20px;
+            text-align: center;
+        }
+
+        .current-expression small {
+            display: block;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-top: 5px;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #00d4ff;
+        }
+
+        .instructions {
+            position: absolute;
+            bottom: 30px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px 25px;
+            border-radius: 10px;
+            font-size: 14px;
+            max-width: 600px;
+            text-align: center;
+        }
+
+        .problem-list {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .problem-list h3 {
+            font-size: 14px;
+            color: #ff6464;
+            margin-bottom: 10px;
+        }
+
+        .problem-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            margin-bottom: 5px;
+            background: rgba(255, 100, 100, 0.1);
+            border-radius: 5px;
+            font-size: 12px;
+        }
+
+        .problem-item button {
+            margin-left: auto;
+            padding: 3px 8px;
+            font-size: 11px;
+            background: rgba(255, 100, 100, 0.3);
+            border: 1px solid #ff6464;
+            border-radius: 3px;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .problem-item button:hover {
+            background: rgba(255, 100, 100, 0.5);
+        }
+
+        .mark-btn {
+            position: absolute;
+            bottom: 100px;
+            background: rgba(255, 100, 100, 0.3);
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 1px solid #ff6464;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .mark-btn:hover {
+            background: rgba(255, 100, 100, 0.5);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>🎭 表情プレビュー（Motion版）</h2>
+            <p>チャット中と同じモーションで確認できます</p>
+            <div id="expression-list">読み込み中...</div>
+
+            <div class="problem-list" id="problem-list" style="display:none;">
+                <h3>⚠️ 気になる表情リスト</h3>
+                <div id="problem-items"></div>
+            </div>
+        </div>
+        <div class="canvas-container">
+            <div class="current-expression">
+                現在の表情: <span id="current-name">neutral</span>
+                <small id="file-name">motion/neutral.motion3.json</small>
+            </div>
+            <canvas id="canvas" width="800" height="700"></canvas>
+            <div class="loading" id="loading">🔄 Live2Dモデルを読み込み中...</div>
+            <button class="mark-btn" id="mark-btn" onclick="markAsProblem()">
+                🚩 この表情を「気になる」リストに追加
+            </button>
+            <div class="instructions">
+                💡 左のボタンをクリックして表情を切り替えてください（アニメーション付き）<br>
+                気に入らない表情は「気になる」ボタンで記録できます
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 表情リスト（日本語対応）
+        const expressions = [
+            { name: 'neutral', jp: 'ニュートラル（無表情）' },
+            { name: 'admiration', jp: '感嘆・称賛' },
+            { name: 'amusement', jp: '楽しい・愉快' },
+            { name: 'anger', jp: '怒り' },
+            { name: 'annoyance', jp: 'イライラ・不機嫌' },
+            { name: 'approval', jp: '同意・承認' },
+            { name: 'caring', jp: '思いやり' },
+            { name: 'confusion', jp: '困惑' },
+            { name: 'crazy', jp: '狂気' },
+            { name: 'curiosity', jp: '好奇心' },
+            { name: 'desire', jp: '欲望' },
+            { name: 'disappointment', jp: '落胆・がっかり' },
+            { name: 'disapproval', jp: '不賛成' },
+            { name: 'disgust', jp: '嫌悪' },
+            { name: 'embarrassment', jp: '恥ずかしい' },
+            { name: 'excitement', jp: '興奮' },
+            { name: 'fear', jp: '恐怖' },
+            { name: 'gratitude', jp: '感謝' },
+            { name: 'grief', jp: '悲嘆' },
+            { name: 'jealousy', jp: '嫉妬' },
+            { name: 'joy', jp: '喜び' },
+            { name: 'love', jp: '愛' },
+            { name: 'nervousness', jp: '緊張' },
+            { name: 'optimism', jp: '楽観' },
+            { name: 'pride', jp: '誇り' },
+            { name: 'realization', jp: '気づき' },
+            { name: 'relief', jp: '安堵' },
+            { name: 'remorse', jp: '後悔' },
+            { name: 'sadness', jp: '悲しみ' },
+            { name: 'sarprise', jp: '驚き' },
+            { name: 'scorn', jp: '軽蔑' },
+            { name: 'talkinghead', jp: '話し中' },
+            { name: 'upset', jp: '動揺' },
+        ];
+
+        let currentModel = null;
+        let currentExpressionName = 'neutral';
+        let problemExpressions = JSON.parse(localStorage.getItem('problemExpressions') || '[]');
+
+        // 表情ボタンを生成
+        function createExpressionButtons() {
+            const container = document.getElementById('expression-list');
+            container.innerHTML = '';
+
+            expressions.forEach(expr => {
+                const btn = document.createElement('button');
+                btn.className = 'expression-btn';
+                btn.id = `btn-${expr.name}`;
+                if (problemExpressions.includes(expr.name)) {
+                    btn.classList.add('problem');
+                }
+                btn.innerHTML = `${expr.name}<span class="jp">${expr.jp}</span>`;
+                btn.onclick = () => setExpression(expr.name);
+                container.appendChild(btn);
+            });
+
+            updateProblemList();
+        }
+
+        // 表情を設定（Motion版）
+        function setExpression(name) {
+            if (!currentModel) return;
+
+            currentExpressionName = name;
+
+            // ボタンのアクティブ状態を更新
+            document.querySelectorAll('.expression-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            const activeBtn = document.getElementById(`btn-${name}`);
+            if (activeBtn) activeBtn.classList.add('active');
+
+            // 表情名を更新
+            const exprInfo = expressions.find(e => e.name === name);
+            document.getElementById('current-name').textContent = exprInfo ? exprInfo.jp : name;
+            document.getElementById('file-name').textContent = `motion/${name}.motion3.json`;
+
+            // チャット中と同じ処理：Expression + Motion を両方実行
+            try {
+                // 1. Expression を設定
+                currentModel.expression(name);
+                console.log('Expression set:', name);
+
+                // 2. Motion を再生（チャット中と同じ）
+                const motionManager = currentModel.internalModel.motionManager;
+                const definitions = motionManager.definitions;
+
+                if (definitions && definitions['']) {
+                    const motionIndex = definitions[''].findIndex(m =>
+                        m.File && m.File.toLowerCase().includes(name.toLowerCase() + '.motion3.json')
+                    );
+
+                    if (motionIndex >= 0) {
+                        motionManager.startMotion('', motionIndex);
+                        console.log('Motion started:', name, 'index:', motionIndex);
+                    } else {
+                        console.warn('Motion not found for:', name);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to set expression/motion:', e);
+            }
+        }
+
+        // 気になる表情としてマーク
+        function markAsProblem() {
+            if (!currentExpressionName) return;
+
+            if (!problemExpressions.includes(currentExpressionName)) {
+                problemExpressions.push(currentExpressionName);
+                localStorage.setItem('problemExpressions', JSON.stringify(problemExpressions));
+
+                const btn = document.getElementById(`btn-${currentExpressionName}`);
+                if (btn) btn.classList.add('problem');
+
+                updateProblemList();
+            }
+        }
+
+        // 問題リストを更新
+        function updateProblemList() {
+            const container = document.getElementById('problem-items');
+            const listDiv = document.getElementById('problem-list');
+
+            if (problemExpressions.length === 0) {
+                listDiv.style.display = 'none';
+                return;
+            }
+
+            listDiv.style.display = 'block';
+            container.innerHTML = '';
+
+            problemExpressions.forEach(name => {
+                const exprInfo = expressions.find(e => e.name === name);
+                const item = document.createElement('div');
+                item.className = 'problem-item';
+                item.innerHTML = `
+                    <span>${name} (${exprInfo ? exprInfo.jp : ''})</span>
+                    <button onclick="removeProblem('${name}')">削除</button>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        // 問題リストから削除
+        function removeProblem(name) {
+            problemExpressions = problemExpressions.filter(n => n !== name);
+            localStorage.setItem('problemExpressions', JSON.stringify(problemExpressions));
+
+            const btn = document.getElementById(`btn-${name}`);
+            if (btn) btn.classList.remove('problem');
+
+            updateProblemList();
+        }
+
+        // Live2Dモデルを読み込み
+        async function loadModel() {
+            const app = new PIXI.Application({
+                view: document.getElementById('canvas'),
+                width: 800,
+                height: 700,
+                backgroundAlpha: 0,
+            });
+
+            try {
+                currentModel = await PIXI.live2d.Live2DModel.from(
+                    './長谷部第四弾4001フリー/長谷部第四弾4001フリー.model3.json'
+                );
+
+                // モデルのサイズと位置を調整
+                currentModel.scale.set(0.35);
+                currentModel.anchor.set(0.5, 0.5);
+                currentModel.x = app.screen.width / 2;
+                currentModel.y = app.screen.height / 2 + 50;
+
+                app.stage.addChild(currentModel);
+
+                document.getElementById('loading').style.display = 'none';
+                console.log('Model loaded successfully!');
+
+                // 利用可能なモーションを確認
+                const motionDefs = currentModel.internalModel.motionManager.definitions;
+                console.log('Available motions:', motionDefs);
+
+            } catch (error) {
+                document.getElementById('loading').textContent = '❌ モデルの読み込みに失敗しました: ' + error.message;
+                console.error('Failed to load model:', error);
+            }
+        }
+
+        // 初期化
+        createExpressionButtons();
+        loadModel();
+    </script>
+</body>
+
+</html>

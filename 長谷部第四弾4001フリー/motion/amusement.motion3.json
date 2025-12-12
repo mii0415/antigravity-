@@ -39,10 +39,10 @@
 			"Id": "ParamEyeLSmile",
 			"Segments": [
 				0,
-				1,
+				0,
 				2,
 				1.633,
-				1
+				0
 			]
 		},
 		{
@@ -50,10 +50,10 @@
 			"Id": "ParamEyeRSmile",
 			"Segments": [
 				0,
-				1,
+				0,
 				2,
 				1.633,
-				1
+				0
 			]
 		},
 		{
