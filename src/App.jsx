@@ -427,6 +427,17 @@ function App() {
   const [touchCount, setTouchCount] = useState(0) // タッチ回数（エスカレーション用）
   const [touchStartPos, setTouchStartPos] = useState(null) // スワイプ検出用
 
+  // Load Touch Count
+  useEffect(() => {
+    dbGet('antigravity_touch_count').then(v => {
+      if (v !== undefined) setTouchCount(v)
+    })
+  }, [])
+  // Save Touch Count
+  useEffect(() => {
+    dbSet('antigravity_touch_count', touchCount)
+  }, [touchCount])
+
   // スワイプ距離累積用 Ref (往復などの撫でる動作を検出するため)
   const touchLastPos = useRef(null)
   const touchMovedDistance = useRef(0)
@@ -3031,7 +3042,9 @@ ${finalSystemPrompt}`
             }
 
             if (iconSrc) {
-              avatarContent = <img src={iconSrc} alt="AI" className="custom-avatar-img" />
+              const isDefaultIcon = (iconSrc === profile.iconImage)
+              const imgClass = isDefaultIcon ? "default-avatar-img" : "custom-avatar-img"
+              avatarContent = <img src={iconSrc} alt="AI" className={imgClass} />
               avatarStyle = {
                 width: `${profile.iconSize || 40}px`,
                 height: `${profile.iconSize || 40}px`,

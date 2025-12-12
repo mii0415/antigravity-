@@ -543,11 +543,20 @@ textarea {
   border-radius: 50%;
   object-fit: cover;
   object-position: top 35%;
-  /* さらに下げる */
+  /* 口元が見える位置 */
   transform: scale(2.2);
-  /* 顔アップ */
+  /* 表情アイコンは大きく */
   transform-origin: center 35%;
-  /* 中心も下げる */
+}
+
+/* デフォルトアイコン用（拡大しない） */
+.default-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  /* デフォルト画像は恐らく顔中心に調整済み、あるいは全体表示でOK */
+  object-position: center;
 }
 
 /* Helper to allow variable size avatars in the chat list */
