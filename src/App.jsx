@@ -358,6 +358,10 @@ function App() {
   const [currentExpression, setCurrentExpression] = useState('neutral')
   const [lastAIResponse, setLastAIResponse] = useState('') // For debugging
 
+  // --- STATE: Input Buffering ---
+  const aiQueueRef = useRef([]) // Stores { type: 'chat'|'action', content: string, timestamp: number }
+  const aiTimerRef = useRef(null) // Debounce timer
+  const executeBufferedAIRequestRef = useRef(null) // Ref to hold latest function
   // Load these settings when DB is ready
   useEffect(() => {
     if (!isLoading) {
@@ -1781,43 +1785,44 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     }
   }
 
-  // --- LOGIC: AI Touch Reaction ---
-  const generateAITouchReaction = async (zone, actionType, level) => {
-    if (!activeProfile) return
+  // --- BUFFERING LOGIC ---
+  const executeBufferedAIRequest = async () => {
+    const queue = aiQueueRef.current
+    if (queue.length === 0) return
 
-    // システムメッセージ的な表現（ユーザーには見せないが、履歴には残すか、あるいはAIへのコンテキストとして渡す）
-    // ここではAIへの入力として構成する
-    const actionDesc = actionType === 'tap' ? 'poked/tapped' : 'rubbed/caressed'
-    const levelDesc = level === 'erotic' ? 'erotically' : (level === 'sweet' ? 'affectionately' : 'casually')
-    const zoneName = zone.charAt(0).toUpperCase() + zone.slice(1)
+    // Sort by timestamp
+    queue.sort((a, b) => a.timestamp - b.timestamp)
 
-    // ユーザーのアクションを表現するテキスト（APIに送る）
-    const promptText = `*touches your ${zoneName} (${actionDesc}, ${levelDesc})*`
+    // Combine prompts
+    const combinedPrompt = queue.map(item => item.content).join('\n\n')
+    console.log('🚀 Executing Buffered Request:', combinedPrompt)
 
-    // ローディング表示（簡易的）
-    // TODO: UI上に「Thinking...」などを出す仕組みがあれば良いが、今回は即座にAPIコール
+    // Clear queue
+    aiQueueRef.current = []
+    aiTimerRef.current = null
 
+    // Call API
+    setIsLoading(true)
     let responseText = ''
     try {
       if (selectedModel.startsWith('gemini')) {
-        responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
+        responseText = await callGeminiAPI(combinedPrompt, activeProfile.systemPrompt, activeProfile.memory)
       } else if (selectedModel.startsWith('ollama:')) {
-        responseText = await callOllamaAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+        responseText = await callOllamaAPI(combinedPrompt, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
       } else {
-        responseText = await callOpenRouterAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+        responseText = await callOpenRouterAPI(combinedPrompt, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
       }
     } catch (e) {
-      console.error("AI Touch Error", e)
-      alert("AI反応の生成に失敗しました: " + e.message)
+      console.error("AI Buffer Error", e)
+      // alert("AIエラー: " + e.message) // 連続エラーでうざいので抑制
+      setIsLoading(false)
       return
     }
+    setIsLoading(false)
 
     if (!responseText) return
 
     detectAndSetEmotion(responseText)
-
-    // タグを除去して表示用テキストを作成
-    // []で囲まれた文字（例：[BG:Honmaru], [Joy]）を削除
     const cleanText = cleanResponseText(responseText)
 
     // Add to chat
@@ -1834,10 +1839,50 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       }
     ])
 
-    // TTS: Read aloud the AI response if enabled
-    if (ttsAutoPlay) {
+    // TTS
+    if (ttsEnabled && ttsAutoPlay && cleanText) {
       speakText(cleanText)
     }
+  }
+
+  // Ensure we always have the latest version of the function (avoid stale closures)
+  useEffect(() => {
+    executeBufferedAIRequestRef.current = executeBufferedAIRequest
+  })
+
+  const queueAIRequest = (type, content) => {
+    console.log(`📥 Queuing ${type}:`, content)
+    aiQueueRef.current.push({ type, content, timestamp: Date.now() })
+
+    if (aiTimerRef.current) {
+      clearTimeout(aiTimerRef.current)
+      console.log('⏱️ Timer reset')
+    }
+
+    // 1.5秒待機
+    aiTimerRef.current = setTimeout(() => {
+      console.log('⏰ Buffer timer fired!')
+      if (executeBufferedAIRequestRef.current) {
+        executeBufferedAIRequestRef.current()
+      } else {
+        console.error('❌ executeBufferedAIRequestRef is null!')
+      }
+    }, 1500)
+  }
+
+  // --- LOGIC: AI Touch Reaction ---
+  const generateAITouchReaction = async (zone, actionType, level) => {
+    if (!activeProfile) return
+
+    const actionDesc = actionType === 'swipe' ? 'kissed/caressed' : (actionType === 'tap' ? 'poked/tapped' : 'touched')
+    const levelDesc = level === 'erotic' ? 'erotically' : (level === 'sweet' ? 'affectionately' : 'casually')
+    const zoneName = zone.charAt(0).toUpperCase() + zone.slice(1)
+
+    // ユーザーのアクションを表現するテキスト
+    const promptText = `*User touches your ${zoneName} (${actionDesc}, ${levelDesc})*`
+
+    // キューに追加 (API呼び出しはexecuteBufferedAIRequestが行う)
+    queueAIRequest('action', promptText)
   }
 
   // --- HANDLER: Character Touch (カスタムセリフ) ---
@@ -2479,53 +2524,13 @@ ${finalSystemPrompt}`
     setInputText('')
     setAttachedFiles([])
 
-    // AI Response
-    const responseProfile = {
-      iconImage: activeProfile.iconImage,
-      iconSize: activeProfile.iconSize,
-      name: activeProfile.name
-    }
+    // AI Response (Buffered)
+    // ファイル添付がある場合の処理は、現状のテキストベースのAPI呼び出しでは限界があるため割愛
+    // 必要であればファイル内容をテキスト化してプロンプトに結合するなどの処理が必要
 
-    let fileAck = ''
-    if (newMessage.files && newMessage.files.length > 0) {
-      fileAck = `(ファイル受領: ${newMessage.files.length}件) `
-    }
-
-    // Call API
-    setIsLoading(true)
-    let apiResponse = ''
-    try {
-      if (selectedModel.startsWith('ollama:')) {
-        apiResponse = await callOllamaAPI(currentInputText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
-      } else if (selectedModel.includes('/') && !selectedModel.startsWith('models/')) {
-        apiResponse = await callOpenRouterAPI(currentInputText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
-      } else {
-        apiResponse = await callGeminiAPI(currentInputText, activeProfile.systemPrompt, activeProfile.memory)
-      }
-
-      // Debug: Save raw response for inspection
-      setLastAIResponse(apiResponse?.substring(0, 100) || 'empty')
-      detectAndSetEmotion(apiResponse)
-
-
-    } finally {
-      setIsLoading(false)
-    }
-
-    const responseText = fileAck + apiResponse
-
-    setMessages(prev => [
-      ...prev,
-      {
-        id: Date.now() + 1,
-        sender: 'ai',
-        text: responseText,
-        model: selectedModel,
-        profile: responseProfile,
-        variants: [responseText],
-        currentVariantIndex: 0
-      }
-    ])
+    // キューに追加 (API呼び出しはexecuteBufferedAIRequestが行う)
+    // 通常のチャットテキストとして送信
+    queueAIRequest('chat', currentInputText)
   }
 
   const handleClearChatHistory = () => {
