@@ -395,6 +395,7 @@ function App() {
 
 
   const [activeProfileId, setActiveProfileId] = useState('default')
+  const [debugLog, setDebugLog] = useState('Debug Log Ready.')
 
   // SAFETY: Ensure activeProfile is never null/undefined to prevent crash
   const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0] || {
@@ -2113,6 +2114,7 @@ Response must be short (under 30 chars). ${tagInstruction}`
 
   // --- HANDLER: Live2D Tap Reaction ---
   const handleLive2DTap = (areas) => {
+    setDebugLog(`Tap: ${areas}\nHasebeDef: ${!!HASEBE_TOUCH_RESPONSES}\nChestDef: ${!!HASEBE_TOUCH_RESPONSES?.chest}\nProfile: ${activeProfile?.name}\nKeys: ${Object.keys(activeProfile?.emotions || {}).length}`);
     let zone = 'body'
 
     // HitAreaからゾーンを判定
@@ -2213,6 +2215,7 @@ Response must be short (under 30 chars). ${tagInstruction}`
 
   // --- HANDLER: Live2D Long Press (Kiss) Reaction ---
   const handleLive2DLongPress = (areas) => {
+    setDebugLog(`LongPress: ${areas}\nProfile: ${activeProfile?.name}`);
     let zone = 'body'
 
     // HitAreaからゾーンを判定
@@ -3086,6 +3089,15 @@ ${finalSystemPrompt}`
           )
         })}
         <div ref={messagesEndRef} />
+        {/* DEBUG LOG */}
+        <div style={{
+          position: 'fixed', top: 50, right: 10, width: 250,
+          background: 'rgba(0,0,0,0.8)', color: '#0f0',
+          fontSize: 10, padding: 5, borderRadius: 5,
+          pointerEvents: 'none', zIndex: 9999, whiteSpace: 'pre-wrap'
+        }}>
+          DEBUG: {debugLog}
+        </div>
       </main>
 
 
