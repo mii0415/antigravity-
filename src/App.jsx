@@ -237,6 +237,9 @@ function App() {
   // 3. Messages (Load from Active Session or Migrate)
   const [messages, setMessages] = useState([])
 
+  // Skip flag to prevent auto-persist during notification-triggered chat creation
+  const skipNextPersistRef = useRef(false)
+
   const [isLoading, setIsLoading] = useState(true) // Initial Loading State
 
   // --- EFFECT: Initial Data Load (IndexedDB with Migration) ---
@@ -328,8 +331,13 @@ function App() {
   }, [activeSessionId, isLoading])
 
   // --- EFFECT: Persist Messages to Active Session ---
-  // --- EFFECT: Persist Messages to Active Session ---
   useEffect(() => {
+    // Check skip flag (used during notification-triggered chat creation to prevent race condition)
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false
+      console.log('⏭️ Skipping message persist (notification new chat)')
+      return
+    }
     if (!isLoading && (messages.length > 0 || activeSessionId)) {
       dbSet(`antigravity_chat_${activeSessionId}`, messages).catch(e => {
         console.error('Message Save Failed:', e)
@@ -385,11 +393,22 @@ function App() {
   const [customOpenRouterModel, setCustomOpenRouterModel] = useState('')
 
   // --- STATE: Ollama & Models ---
-  const [ollamaUrl, setOllamaUrl] = useState('http://127.0.0.1:11434')
+  const [ollamaUrl, setOllamaUrl] = useState('https://semivoluntary-arie-unripening.ngrok-free.dev/ollama')
+  // Search Focus States
+  const [isGeminiSeeking, setIsGeminiSeeking] = useState(false)
+  const [isOrSeeking, setIsOrSeeking] = useState(false)
+  const [isOllamaSeeking, setIsOllamaSeeking] = useState(false)
 
   // --- STATE: UI Helpers ---
   const [previewImage, setPreviewImage] = useState(null)
   const [ollamaModels, setOllamaModels] = useState([])
+  const [openRouterModels, setOpenRouterModels] = useState([]) // OpenRouterから取得
+  const [geminiModels, setGeminiModels] = useState([]) // Gemini APIから取得
+  const [favoriteModels, setFavoriteModels] = useState([]) // お気に入りモデル
+  const [modelSearchQuery, setModelSearchQuery] = useState('') // モデル検索（統合）
+  const [orSearchQuery, setOrSearchQuery] = useState('') // OpenRouter検索
+  const [geminiSearchQuery, setGeminiSearchQuery] = useState('') // Gemini検索
+  const [ollamaSearchQuery, setOllamaSearchQuery] = useState('') // Ollama検索
 
   // --- STATE: Anti-Censorship ---
   const [useDummySettings, setUseDummySettings] = useState(false)
@@ -404,6 +423,24 @@ function App() {
   const [ttsModelName, setTtsModelName] = useState('')
   const [ttsAutoPlay, setTtsAutoPlay] = useState(true)
   const [ttsDictionary, setTtsDictionary] = useState({}) // { '主': 'あるじ' }
+  const [ollamaConnected, setOllamaConnected] = useState(false) // 接続状態
+  const [ttsConnected, setTtsConnected] = useState(false) // 接続状態
+
+  // --- STATE: Profile Copy Options ---
+  const [copyOptions, setCopyOptions] = useState({
+    systemPrompt: true,
+    memory: true,
+    visuals: true // images, emotions, backgrounds
+  })
+
+  // --- STATE: Translation ---
+  const [translationEnabled, setTranslationEnabled] = useState(false)
+  const [translationDirection, setTranslationDirection] = useState('EN-JA') // EN-JA or JA-EN
+
+  const [translateUserInput, setTranslateUserInput] = useState(false)
+  const [firstPerson, setFirstPerson] = useState('俺') // AI's first-person pronoun
+  const [masterTitle, setMasterTitle] = useState('主') // How AI calls the user
+  const [deeplApiKey, setDeeplApiKey] = useState('')
 
   // --- STATE: Live2D ---
   const [live2dEnabled, setLive2dEnabled] = useState(false)
@@ -444,6 +481,15 @@ function App() {
       dbGet('antigravity_live2d_enabled').then(v => { if (v !== undefined) setLive2dEnabled(v) })
       dbGet('antigravity_live2d_model_path').then(v => { if (v) setLive2dModelPath(v) })
       dbGet('antigravity_live2d_expression').then(v => { if (v) setCurrentExpression(v) })
+      // Translation Settings
+      dbGet('antigravity_translation_enabled').then(v => { if (v !== undefined) setTranslationEnabled(v) })
+      dbGet('antigravity_translation_direction').then(v => { if (v) setTranslationDirection(v) })
+      dbGet('antigravity_translate_user_input').then(v => { if (v !== undefined) setTranslateUserInput(v) })
+      dbGet('antigravity_first_person').then(v => { if (v) setFirstPerson(v) })
+      dbGet('antigravity_master_title').then(v => { if (v) setMasterTitle(v) })
+      dbGet('antigravity_deepl_key').then(v => { if (v) setDeeplApiKey(v) })
+      // Favorite Models
+      dbGet('antigravity_favorite_models').then(v => { if (v) setFavoriteModels(v) })
     }
   }, [isLoading])
 
@@ -650,6 +696,23 @@ function App() {
     setMessages(initialMessages) // Local update
     setCurrentExpression('neutral') // Reset Live2D expression to default
     setIsFolderOpen(false) // Close sidebar on mobile after selection if needed
+
+    // 初回メッセージを読み上げ (TTS有効かつ自動再生ONの場合)
+    // Note: ttsEnabled/ttsAutoPlay は useCallback の依存配列に追加不可のため、直接参照
+    setTimeout(() => {
+      // speakTextは外部スコープで定義されているので、現時点のtts設定を確認
+      dbGet('antigravity_tts_enabled').then(enabled => {
+        if (enabled) {
+          dbGet('antigravity_tts_auto_play').then(autoPlay => {
+            if (autoPlay && firstMessage) {
+              // speakText関数を直接呼び出し（useCallbackの制約回避）
+              // ここでは簡易的にイベント発火で対応
+              window.dispatchEvent(new CustomEvent('antigravity-speak', { detail: { text: firstMessage } }))
+            }
+          })
+        }
+      })
+    }, 800)
   }, [setSessions, setActiveSessionId, setMessages, setIsFolderOpen, setCurrentExpression])
 
   // Ref update removed
@@ -769,7 +832,9 @@ function App() {
                 if (responseText) {
                   const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
                   if (cleanText) {
-                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                    // タイトルにAI生成の挨拶を使用
+                    const notifTitle = cleanText.length > 30 ? cleanText.substring(0, 30) + '…' : cleanText
+                    const n = new Notification(notifTitle, { body: cleanText, icon: activeProfile.iconImage });
                     n.onclick = (e) => {
                       e.preventDefault(); // Prevent browser default handling if any
                       window.focus();
@@ -786,7 +851,9 @@ function App() {
                 if (responseText) {
                   const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
                   if (cleanText) {
-                    const n = new Notification(activeProfile.name, { body: cleanText, icon: activeProfile.iconImage });
+                    // タイトルにAI生成の挨拶を使用
+                    const notifTitle = cleanText.length > 30 ? cleanText.substring(0, 30) + '…' : cleanText
+                    const n = new Notification(notifTitle, { body: cleanText, icon: activeProfile.iconImage });
                     n.onclick = (e) => {
                       e.preventDefault();
                       window.focus();
@@ -821,16 +888,34 @@ function App() {
   }, [ollamaUrl])
 
   useEffect(() => {
+    if (isLoading) return
     dbSet('antigravity_use_dummy', useDummySettings).catch(console.warn)
-  }, [useDummySettings])
+  }, [useDummySettings, isLoading])
 
   useEffect(() => {
+    if (isLoading) return
     dbSet('antigravity_dummy_model', dummyModelName).catch(console.warn)
-  }, [dummyModelName])
+  }, [dummyModelName, isLoading])
 
   useEffect(() => {
+    if (isLoading) return
     dbSet('antigravity_dummy_user', dummyUserName).catch(console.warn)
-  }, [dummyUserName])
+  }, [dummyUserName, isLoading])
+
+  // --- LIFECYCLE: Mobile Viewport Fix ---
+  useEffect(() => {
+    // スマホでのリロード/起動時に画面上部が見切れる問題を修正
+    window.scrollTo(0, 0)
+
+    // アドレスバーの挙動対策で遅延実行
+    const timer1 = setTimeout(() => window.scrollTo(0, 0), 100)
+    const timer2 = setTimeout(() => window.scrollTo(0, 0), 500)
+
+    return () => {
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+    }
+  }, [])
 
   useEffect(() => {
     dbSet('antigravity_temperature', temperature).catch(console.warn)
@@ -857,12 +942,14 @@ function App() {
   }, [activeProfileId])
 
   useEffect(() => {
+    if (isLoading) return
     dbSet('antigravity_api_key', apiKey).catch(console.warn)
-  }, [apiKey])
+  }, [apiKey, isLoading])
 
   useEffect(() => {
+    if (isLoading) return
     dbSet('antigravity_openrouter_key', openRouterApiKey).catch(console.warn)
-  }, [openRouterApiKey])
+  }, [openRouterApiKey, isLoading])
 
   useEffect(() => {
     dbSet('antigravity_custom_or_model', customOpenRouterModel).catch(console.warn)
@@ -905,12 +992,188 @@ function App() {
     dbSet('antigravity_live2d_model_path', live2dModelPath).catch(console.warn)
   }, [live2dModelPath, isLoading])
 
+  // --- Translation Settings Persistence ---
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_translation_enabled', translationEnabled).catch(console.warn)
+  }, [translationEnabled, isLoading])
 
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_translation_direction', translationDirection).catch(console.warn)
+  }, [translationDirection, isLoading])
 
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_translate_user_input', translateUserInput).catch(console.warn)
+  }, [translateUserInput, isLoading])
 
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_first_person', firstPerson).catch(console.warn)
+  }, [firstPerson, isLoading])
 
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_master_title', masterTitle).catch(console.warn)
+  }, [masterTitle, isLoading])
 
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_deepl_key', deeplApiKey).catch(console.warn)
+  }, [deeplApiKey, isLoading])
 
+  useEffect(() => {
+    if (isLoading) return
+    dbSet('antigravity_favorite_models', favoriteModels).catch(console.warn)
+  }, [favoriteModels, isLoading])
+
+  // --- HELPER: DeepL Translation (via Gateway) ---
+
+  // --- HELPER: DeepL Translation (via Gateway) ---
+  const translateWithDeepL = async (text, targetLang = 'JA') => {
+    if (!deeplApiKey || !text) return null
+    try {
+      const gatewayUrl = localStorage.getItem('antigravity_gateway_url') || 'http://localhost:3456'
+      const response = await fetch(`${gatewayUrl}/api/deepl/translate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: [text],
+          target_lang: targetLang,
+          auth_key: deeplApiKey
+        })
+      })
+      if (!response.ok) throw new Error(`DeepL API error: ${response.status}`)
+      const data = await response.json()
+      return data.translations?.[0]?.text || null
+    } catch (e) {
+      console.error('DeepL Translation Error:', e)
+      return null
+    }
+  }
+
+  // --- HELPER: Translate with OpenRouter (fallback) ---
+  const translateWithOpenRouter = async (text, targetLang = 'JA') => {
+    if (!openRouterApiKey || !text) return null
+    try {
+      const langName = targetLang === 'JA' ? 'Japanese' : 'English'
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openRouterApiKey}`
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.0-flash-001',
+          messages: [
+            { role: 'system', content: `You are a translator. Translate the following text to ${langName}. Output only the translation, nothing else.` },
+            { role: 'user', content: text }
+          ]
+        })
+      })
+      if (!response.ok) throw new Error(`OpenRouter Translation error: ${response.status}`)
+      const data = await response.json()
+      return data.choices?.[0]?.message?.content || null
+    } catch (e) {
+      console.error('OpenRouter Translation Error:', e)
+      return null
+    }
+  }
+
+  // --- HELPER: Translate with Gemini (fallback) ---
+  const translateWithGemini = async (text, targetLang = 'JA') => {
+    if (!apiKey || !text) return null
+    try {
+      const langName = targetLang === 'JA' ? 'Japanese' : 'English'
+      const genAI = new GoogleGenerativeAI(apiKey)
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+      const result = await model.generateContent(`Translate the following text to ${langName}. Output only the translation, nothing else:\n\n${text}`)
+      return result.response.text() || null
+    } catch (e) {
+      console.error('Gemini Translation Error:', e)
+      return null
+    }
+  }
+
+  // --- HELPER: Apply Pronoun Replacement (Post-translation fix) ---
+  const applyPronounReplacement = (text) => {
+    if (!text) return text
+    let result = text
+
+    // 一人称の置換 (私/僕/俺/わたし/ぼく/オレ など → firstPerson)
+    const firstPersonVariants = ['私', '僕', 'わたし', 'ぼく', 'オレ', 'おれ', 'アタシ', 'あたし', 'ワタシ', 'ボク']
+    firstPersonVariants.forEach(fp => {
+      result = result.replaceAll(fp, firstPerson)
+    })
+
+    // 呼び方の置換 (あなた/君/貴方/お前/主人/ご主人様/ご主様 など → masterTitle)
+    const masterVariants = ['あなた', '君', '貴方', 'お前', 'おまえ', '主人', 'ご主人様', 'ご主人', 'ご主様', '貴殿', 'キミ', 'アンタ', 'マスター', 'master', 'Master']
+    masterVariants.forEach(mt => {
+      result = result.replaceAll(mt, masterTitle)
+    })
+
+    console.log(`[Pronoun] 置換設定: firstPerson=${firstPerson}, masterTitle=${masterTitle}`)
+    return result
+  }
+
+  // --- HELPER: Translate Text (with fallback: DeepL → OpenRouter → Gemini) ---
+  const translateText = async (text, direction = 'EN-JA') => {
+    console.log('[翻訳] translateText called:', { translationEnabled, direction, textLen: text?.length })
+    if (!translationEnabled) {
+      console.log('[翻訳] Translation disabled, returning original')
+      return text
+    }
+    const targetLang = direction === 'EN-JA' ? 'JA' : 'EN'
+
+    let translated = null
+    console.log('[翻訳] Keys available:', { deeplApiKey: !!deeplApiKey, openRouterApiKey: !!openRouterApiKey, apiKey: !!apiKey })
+
+    // 1. Try DeepL first
+    if (deeplApiKey) {
+      console.log('[翻訳] Trying DeepL...')
+      translated = await translateWithDeepL(text, targetLang)
+      if (translated) {
+        console.log('[翻訳] DeepL success!')
+      } else {
+        console.log('[翻訳] DeepL failed')
+      }
+    }
+
+    // 2. Fallback to OpenRouter
+    if (!translated && openRouterApiKey) {
+      console.log('[翻訳] Trying OpenRouter...')
+      translated = await translateWithOpenRouter(text, targetLang)
+      if (translated) console.log('[翻訳] OpenRouter success!')
+    }
+
+    // 3. Fallback to Gemini
+    if (!translated && apiKey) {
+      console.log('[翻訳] Trying Gemini...')
+      translated = await translateWithGemini(text, targetLang)
+      if (translated) {
+        console.log('[翻訳] Gemini success!')
+      } else {
+        console.log('[翻訳] Gemini failed')
+      }
+    }
+
+    // If all failed, return original
+    if (!translated) {
+      console.log('[翻訳] All methods failed, returning original')
+      return text
+    }
+
+    // Apply pronoun replacement after translation to Japanese
+    if (targetLang === 'JA') {
+      console.log('[翻訳] Applying pronoun replacement...')
+      translated = applyPronounReplacement(translated)
+    }
+    console.log('[翻訳] Final result:', translated?.substring(0, 50))
+    return translated
+  }
+
+  // --- HELPER: Call Ollama API ---
 
 
   // --- HELPER: Call Ollama API ---
@@ -1184,15 +1447,23 @@ The message must be consistent with your character persona and tone. (Max 1 shor
             navigator.serviceWorker.ready,
             timeoutPromise
           ])
-          await registration.showNotification(activeProfile.name || 'Antigravity', {
-            body: simpleBody,
+          // タイトルにAI生成の挨拶を使用（長い場合は短縮）
+          const notifTitle = simpleBody.length > 30
+            ? simpleBody.substring(0, 30) + '…'
+            : simpleBody
+          await registration.showNotification(notifTitle, {
+            body: simpleBody, // メッセージを保持（SW経由で新規チャットに渡すため）
             icon: notifIcon
           })
         } catch (notifError) {
           console.warn('SW notification failed, falling back to standard Notification API', notifError)
           // Fallback to standard Notification API (Works on PC/Mac even if SW fails)
           try {
-            const n = new Notification(activeProfile.name || 'Antigravity', { body: simpleBody, icon: notifIcon })
+            // タイトルにAI生成の挨拶を使用
+            const fallbackTitle = simpleBody.length > 30
+              ? simpleBody.substring(0, 30) + '…'
+              : simpleBody
+            const n = new Notification(fallbackTitle, { body: simpleBody, icon: notifIcon })
           } catch (e2) {
             console.error('Standard notification also failed', e2)
             alert('通知の送信に失敗しました (rev.3)。ブラウザの通知設定を確認してください。')
@@ -1379,6 +1650,17 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     }
   }, [ttsDictionary, isLoading])
 
+  // --- EFFECT: Listen for custom speak event (for initial message TTS) ---
+  useEffect(() => {
+    const handleSpeakEvent = (e) => {
+      if (e.detail && e.detail.text && ttsEnabled && ttsAutoPlay) {
+        speakText(e.detail.text)
+      }
+    }
+    window.addEventListener('antigravity-speak', handleSpeakEvent)
+    return () => window.removeEventListener('antigravity-speak', handleSpeakEvent)
+  }, [ttsEnabled, ttsAutoPlay])
+
   // Save OpenRouter Key
   useEffect(() => {
     if (!isLoading) {
@@ -1496,31 +1778,104 @@ The message must be consistent with your character persona and tone. (Max 1 shor
   }, [currentExpression, live2dEnabled])
 
   // --- EFFECT: Listen for SW notification click ---
+  // When notification is clicked: Create new chat with notification content as first message
   useEffect(() => {
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      const handleMessage = (event) => {
-        if (event.data && event.data.type === 'NOTIFICATION_CLICK') {
-          speakText(event.data.body)
+    if (!('serviceWorker' in navigator)) return
+
+    const handleMessage = async (event) => {
+      console.log('📩 SW Message received:', event.data)
+
+      if (event.data && event.data.type === 'NOTIFICATION_CLICK') {
+        const notificationBody = event.data.body
+        console.log('🔔 Notification click detected, creating new chat with:', notificationBody)
+
+        // 1. Create new session
+        const newId = typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `session_${Date.now()}_${Math.random().toString(36).slice(2)}`
+
+        // Get timestamp for title
+        const now = new Date()
+        const timeStr = `${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+        const newTitle = `通知から: ${timeStr}`
+
+        const newSession = {
+          id: newId,
+          title: newTitle,
+          lastUpdated: Date.now()
         }
+
+        // 2. Create first message from notification content
+        const activeProfile = profiles.find(p => p.id === activeProfileId)
+        const firstMessage = {
+          id: Date.now(),
+          sender: 'ai',
+          text: notificationBody,
+          profile: {
+            name: activeProfile?.name || 'AI',
+            iconImage: activeProfile?.iconImage,
+            iconSize: activeProfile?.iconSize || 40
+          }
+        }
+
+        try {
+          // 3. Save to DB FIRST (before state updates)
+          console.log('💾 Saving new session to DB:', newId)
+
+          // Save messages for new session
+          await dbSet(`antigravity_chat_${newId}`, [firstMessage])
+
+          // Save updated sessions list
+          const currentSessions = await dbGet('antigravity_sessions') || []
+          const updatedSessions = [newSession, ...currentSessions]
+          await dbSet('antigravity_sessions', updatedSessions)
+
+          // Save new active session ID
+          await dbSet('antigravity_active_session_id', newId)
+
+          // 4. NOW update React state (after DB is consistent)
+          // Set skip flag to prevent auto-persist from overwriting with stale data
+          skipNextPersistRef.current = true
+          setSessions(updatedSessions)
+          setActiveSessionId(newId)
+          setMessages([firstMessage])
+
+          console.log('✅ New chat created from notification:', newId)
+        } catch (e) {
+          console.error('❌ Failed to create new chat from notification:', e)
+        }
+
+        // 5. Play TTS
+        speakText(notificationBody)
       }
-      navigator.serviceWorker.addEventListener('message', handleMessage)
-      return () => navigator.serviceWorker.removeEventListener('message', handleMessage)
     }
-  }, [ttsEnabled, ttsApiUrl, ttsModelName, ttsDictionary])
+
+    // Register listener on serviceWorker (not controller - controller can be null!)
+    navigator.serviceWorker.addEventListener('message', handleMessage)
+    console.log('📡 SW message listener registered')
+
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleMessage)
+      console.log('📡 SW message listener removed')
+    }
+  }, [ttsEnabled, ttsApiUrl, ttsModelName, ttsDictionary, profiles, activeProfileId])
 
   // --- HELPER: Fetch Ollama Models ---
   const fetchLocalModels = async (silent = false) => {
     try {
-      const res = await fetch(`${ollamaUrl}/api/tags`)
+      const isNgrok = ollamaUrl.includes('ngrok')
+      const headers = isNgrok ? { 'ngrok-skip-browser-warning': 'true' } : {}
+      const res = await fetch(`${ollamaUrl}/api/tags`, { headers })
       if (!res.ok) throw new Error('Failed to connect')
       const data = await res.json()
       const models = data.models.map(m => `ollama:${m.name}`)
       setOllamaModels(models)
+      setOllamaConnected(true)
       if (models.length > 0 && !selectedModel.startsWith('ollama:') && !silent) {
-        // Optional: Auto-switch? No, let user decide.
         alert(`✅ Ollama接続成功！\n${models.length}個のモデルが見つかりました。\nモデル選択から選んでください。`)
       }
     } catch (e) {
+      setOllamaConnected(false)
       if (!silent) {
         alert(`❌ Ollama接続失敗\n${ollamaUrl} に繋がりません。\nCORS設定やOllamaが起動しているか確認してください。`)
       } else {
@@ -1529,10 +1884,71 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     }
   }
 
+  // --- HELPER: Fetch OpenRouter Models ---
+  const fetchOpenRouterModels = async () => {
+    if (!openRouterApiKey) {
+      alert('OpenRouter APIキーを設定してください')
+      return
+    }
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { 'Authorization': `Bearer ${openRouterApiKey}` }
+      })
+      if (!res.ok) throw new Error('Failed to fetch')
+      const data = await res.json()
+      const models = data.data?.map(m => m.id) || []
+      setOpenRouterModels(models)
+      alert(`✅ OpenRouter: ${models.length}個のモデルを取得しました`)
+    } catch (e) {
+      console.error('OpenRouter fetch error:', e)
+      alert('❌ OpenRouterモデル取得失敗: ' + e.message)
+    }
+  }
+
+  // --- HELPER: Fetch Gemini Models ---
+  const fetchGeminiModels = async () => {
+    if (!apiKey) {
+      alert('Gemini APIキーを設定してください')
+      return
+    }
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`)
+      if (!res.ok) throw new Error('Failed to fetch')
+      const data = await res.json()
+      const models = data.models?.filter(m => m.name.includes('gemini')).map(m => m.name.replace('models/', '')) || []
+      setGeminiModels(models)
+      alert(`✅ Gemini: ${models.length}個のモデルを取得しました`)
+    } catch (e) {
+      console.error('Gemini fetch error:', e)
+      alert('❌ Geminiモデル取得失敗: ' + e.message)
+    }
+  }
+
   // --- EFFECT: Auto Fetch Models ---
   useEffect(() => {
     fetchLocalModels(true)
   }, [ollamaUrl])
+
+  // --- EFFECT: Auto-Sync All Models on Mount ---
+  const hasInitialSynced = useRef(false)
+  useEffect(() => {
+    // IDBからキーがロードされるのを待つ
+    const timer = setTimeout(() => {
+      if (hasInitialSynced.current) return
+
+      console.log('Auto-syncing models...')
+      if (apiKey) {
+        fetchGeminiModels()
+      }
+      if (openRouterApiKey) {
+        fetchOpenRouterModels()
+      }
+      // Ollama is already handled above by ollamaUrl dependency
+      hasInitialSynced.current = true
+    }, 1500)
+
+    return () => clearTimeout(timer)
+  }, [apiKey, openRouterApiKey])
 
   // --- EFFECT: Scroll ---
   const scrollToBottom = () => {
@@ -1692,6 +2108,47 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     }
     setProfiles(prev => [...prev, newProfile])
     setActiveProfileId(newId)
+  }
+
+  // プロファイルの内容を他のプロファイルにコピー
+  const handleCopyProfileTo = (targetProfileId) => {
+    if (!activeProfile || targetProfileId === activeProfile.id) return
+
+    const targetName = profiles.find(p => p.id === targetProfileId)?.name || 'ターゲット'
+    const copyItems = []
+    if (copyOptions.systemPrompt) copyItems.push('システムプロンプト')
+    if (copyOptions.memory) copyItems.push('メモリ')
+    if (copyOptions.visuals) copyItems.push('画像・感情・背景設定')
+
+    if (copyItems.length === 0) {
+      alert('コピーする項目を選択してください')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `現在のプロファイル「${activeProfile.name}」の内容を\nプロファイル「${targetName}」に上書きしますか？\n\n【コピー対象】\n${copyItems.map(i => `・${i}`).join('\n')}`
+    )
+    if (!confirmed) return
+
+    setProfiles(prev => prev.map(p => {
+      if (p.id === targetProfileId) {
+        const updated = { ...p }
+        if (copyOptions.systemPrompt) updated.systemPrompt = activeProfile.systemPrompt
+        if (copyOptions.memory) updated.memory = activeProfile.memory
+        if (copyOptions.visuals) {
+          updated.iconImage = activeProfile.iconImage
+          updated.iconSize = activeProfile.iconSize
+          updated.backgroundImage = activeProfile.backgroundImage
+          updated.backgrounds = { ...activeProfile.backgrounds }
+          updated.emotions = { ...activeProfile.emotions }
+          updated.defaultEmotion = activeProfile.defaultEmotion
+          updated.defaultBackground = activeProfile.defaultBackground
+        }
+        return updated
+      }
+      return p
+    }))
+    alert('プロファイルをコピーしました')
   }
 
   // --- HELPER: Image Compression ---
@@ -2104,6 +2561,42 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     setIsLoading(false)
 
     if (!responseText) return
+
+    // Ollama使用時は翻訳を適用 (EN→JA)
+    if (selectedModel.startsWith('ollama:') && translationEnabled) {
+      try {
+        const translatedText = await translateText(responseText, 'EN-JA')
+        if (translatedText && translatedText !== responseText) {
+          console.log('タッチ応答翻訳完了')
+          responseText = translatedText
+        }
+      } catch (e) {
+        console.error('Touch Translation failed:', e)
+      }
+    }
+
+    // Live2D表情検出デバッグ
+    console.log('🎭 AI Response for emotion detection:', responseText.substring(0, 100) + '...')
+    const tagPreCheck = responseText.match(/[\[【](.*?)[\]】]/)
+    if (tagPreCheck) {
+      console.log('🎭 Pre-check: Found emotion tag:', tagPreCheck[1])
+    } else {
+      console.log('🎭 Pre-check: NO emotion tag found in response!')
+      // Live2Dが有効でタグがない場合、コンテキストからランダムに表情を選ぶ
+      if (live2dEnabled) {
+        const fallbackExpressions = ['joy', 'love', 'neutral']
+        const randomExpr = fallbackExpressions[Math.floor(Math.random() * fallbackExpressions.length)]
+        console.log('🎭 Fallback: Setting random expression:', randomExpr)
+        setCurrentExpression(randomExpr)
+        if (live2dRef.current) {
+          try {
+            live2dRef.current.setExpression(randomExpr)
+          } catch (e) {
+            console.warn('Fallback setExpression failed:', e)
+          }
+        }
+      }
+    }
 
     detectAndSetEmotion(responseText)
 
@@ -2908,22 +3401,6 @@ ${finalSystemPrompt}`
     }
   }
 
-  if (isLoading) {
-    return (
-      <div style={{
-        position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-        backgroundColor: '#fce4ec', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', zIndex: 9999
-      }}>
-        <Loader className="animate-spin" size={48} color="#ec407a" />
-        <p style={{ marginTop: '20px', color: '#ad1457', fontWeight: 'bold' }}>
-          データを読み込んでいます...<br />
-          (初回は移行処理のため時間がかかる場合があります)
-        </p>
-      </div>
-    )
-  }
-
   return (
     <div className={`app-container ${uiMode === 'visual_novel' ? 'visual-novel' : ''}`}>
       {/* DEBUG PANEL - Always visible */}
@@ -2941,30 +3418,32 @@ ${finalSystemPrompt}`
               onChange={(e) => setSelectedModel(e.target.value)}
               className="model-select"
             >
-              <optgroup label="Gemini API">
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (最新・無料枠推奨)</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (高性能・有料の可能性大)</option>
-                <option value="gemini-1.5-flash-002">Gemini 1.5 Flash (v002)</option>
-              </optgroup>
-              <optgroup label="OpenRouter (要API Key)">
-                <option value="moonshotai/kimi-k2">Kimi K2 (Moonshot)</option>
-                <option value="thudm/glm-4-plus">GLM-4.6 (Plus)</option>
-                <option value="thudm/glm-4-0520">GLM-4.6 (Exacto)</option>
-                <option value="thudm/glm-4v-plus">GLM-4.6V (Visual)</option>
-                <option value="custom-openrouter">Custom (下記で手動入力)</option>
-              </optgroup>
-              {ollamaModels.length > 0 && (
-                <optgroup label="Local (Ollama)">
-                  {ollamaModels.map(m => (
-                    <option key={m} value={m}>{m.replace('ollama:', '')}</option>
-                  ))}
-                </optgroup>
+              {/* Only show favorites if any exist */}
+              {favoriteModels.length > 0 ? (
+                <>
+                  <optgroup label="Favorites (Gemini)">
+                    {favoriteModels.filter(m => m.startsWith('gemini') || geminiModels.includes(m)).map(m => (
+                      <option key={`fav-${m}`} value={m}>★ {m}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Favorites (OpenRouter)">
+                    {favoriteModels.filter(m => !m.startsWith('ollama:') && !m.startsWith('gemini') && !geminiModels.includes(m)).map(m => (
+                      <option key={`fav-${m}`} value={m}>★ {m.includes('/') ? m.split('/').pop() : m}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Favorites (Ollama)">
+                    {favoriteModels.filter(m => m.startsWith('ollama:')).map(m => (
+                      <option key={`fav-${m}`} value={m}>★ {m.replace('ollama:', '')}</option>
+                    ))}
+                  </optgroup>
+                  <option value="__open_settings__" disabled>───────────</option>
+                </>
+              ) : (
+                <option value="" disabled>★お気に入りを設定で追加</option>
               )}
-              {/* Fallback for selected Ollama model if not in list yet */}
-              {selectedModel.startsWith('ollama:') && !ollamaModels.includes(selectedModel) && (
-                <optgroup label="Legacy / Unlisted">
-                  <option value={selectedModel}>{selectedModel.replace('ollama:', '')} (未接続/履歴)</option>
-                </optgroup>
+              {/* Current model if not in favorites */}
+              {!favoriteModels.includes(selectedModel) && selectedModel && (
+                <option value={selectedModel}>{selectedModel.replace('ollama:', '')} (現在)</option>
               )}
             </select>
             <ChevronDown size={14} className="select-icon" />
@@ -3228,7 +3707,7 @@ ${finalSystemPrompt}`
 
           return (
             <div key={msg.id} className={`message-row ${msg.sender === 'user' ? 'user-row' : 'ai-row'}`}>
-              <div className={`avatar ${msg.sender}`} style={avatarStyle}>
+              <div className={`avatar ${msg.sender}`} style={{ ...avatarStyle, display: uiMode === 'visual_novel' ? 'none' : 'flex' }}>
                 {avatarContent}
               </div>
               <div className="message-content">
@@ -3364,8 +3843,8 @@ ${finalSystemPrompt}`
             />
           </div>
         </div>
-        <button className="send-btn" onClick={handleSend} disabled={isLoading || (!inputText.trim() && attachedFiles.length === 0)}>
-          {isLoading ? <Loader size={20} className="spin" /> : <Send size={20} />}
+        <button className="send-btn" onClick={handleSend} disabled={!inputText.trim() && attachedFiles.length === 0}>
+          <Send size={20} />
         </button>
       </footer>
 
@@ -3450,6 +3929,197 @@ ${finalSystemPrompt}`
                     ※ <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">Keysはこちら</a> (Kimi, GLM等を使用する場合に必要)
                   </p>
                 </div>
+
+                {/* === Gemini Models Section === */}
+                <div className="memory-section">
+                  <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Bot size={16} />
+                      <label className="setting-label">Gemini モデル</label>
+                    </div>
+                    <button onClick={fetchGeminiModels} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
+                  </div>
+                  {/* Search */}
+                  <input
+                    type="text"
+                    placeholder="🔍 モデル検索..."
+                    value={geminiSearchQuery}
+                    onChange={(e) => setGeminiSearchQuery(e.target.value)}
+                    onFocus={() => setIsGeminiSeeking(true)}
+                    onBlur={() => setTimeout(() => setIsGeminiSeeking(false), 200)}
+                    style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
+                  />
+                  {/* Favorites Chips (Gemini) */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                    {favoriteModels.filter(m => m.startsWith('gemini') || geminiModels.includes(m)).map(m => (
+                      <div key={m} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                        padding: '4px 10px', borderRadius: '16px',
+                        backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
+                        border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                      }}>
+                        <span
+                          onClick={() => setSelectedModel(m)}
+                          style={{ cursor: 'pointer', fontWeight: '500' }}
+                          title="クリックで選択"
+                        >
+                          {m}
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
+                            padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold'
+                          }}
+                          title="削除"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Scrollable Model List (Hidden unless searching or focused) */}
+                  {(geminiSearchQuery || isGeminiSeeking) && (
+                    <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
+                      {geminiModels.filter(m => !geminiSearchQuery || m.toLowerCase().includes(geminiSearchQuery.toLowerCase())).map(m => (
+                        <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => setSelectedModel(m)}>
+                          <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m}</span>
+                          <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
+                        </div>
+                      ))}
+                      {geminiModels.filter(m => m.toLowerCase().includes(geminiSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
+                    </div>
+                  )}
+                </div>
+
+                {/* === OpenRouter Models Section === */}
+                <div className="memory-section">
+                  <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Bot size={16} />
+                      <label className="setting-label">OpenRouter モデル</label>
+                    </div>
+                    <button onClick={fetchOpenRouterModels} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
+                  </div>
+                  {/* Search */}
+                  <input
+                    type="text"
+                    placeholder="🔍 モデル検索..."
+                    value={orSearchQuery}
+                    onChange={(e) => setOrSearchQuery(e.target.value)}
+                    onFocus={() => setIsOrSeeking(true)}
+                    onBlur={() => setTimeout(() => setIsOrSeeking(false), 200)}
+                    style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
+                  />
+                  {/* Favorites Chips (OpenRouter) */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                    {favoriteModels.filter(m => !m.startsWith('ollama:') && !m.startsWith('gemini') && !geminiModels.includes(m)).map(m => (
+                      <div key={m} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                        padding: '4px 10px', borderRadius: '16px',
+                        backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
+                        border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                      }}>
+                        <span
+                          onClick={() => setSelectedModel(m)}
+                          style={{ cursor: 'pointer', fontWeight: '500' }}
+                          title="クリックで選択"
+                        >
+                          {m.includes('/') ? m.split('/').pop() : m}
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
+                            padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold'
+                          }}
+                          title="削除"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Scrollable Model List (Hidden unless searching or focused) */}
+                  {(orSearchQuery || isOrSeeking) && (
+                    <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
+                      {openRouterModels.filter(m => !orSearchQuery || m.toLowerCase().includes(orSearchQuery.toLowerCase())).slice(0, 100).map(m => (
+                        <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => setSelectedModel(m)}>
+                          <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m}</span>
+                          <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
+                        </div>
+                      ))}
+                      {openRouterModels.filter(m => m.toLowerCase().includes(orSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
+                    </div>
+                  )}
+                </div>
+
+                {/* === Ollama Models Section === */}
+                <div className="memory-section">
+                  <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Bot size={16} />
+                      <label className="setting-label">Ollama モデル (ローカル)</label>
+                    </div>
+                    <button onClick={() => fetchLocalModels(false)} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
+                  </div>
+                  {/* Search */}
+                  <input
+                    type="text"
+                    placeholder="🔍 モデル検索..."
+                    value={ollamaSearchQuery}
+                    onChange={(e) => setOllamaSearchQuery(e.target.value)}
+                    onFocus={() => setIsOllamaSeeking(true)}
+                    onBlur={() => setTimeout(() => setIsOllamaSeeking(false), 200)}
+                    style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
+                  />
+                  {/* Favorites Chips (Ollama) */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                    {favoriteModels.filter(m => m.startsWith('ollama:')).map(m => (
+                      <div key={m} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                        padding: '4px 10px', borderRadius: '16px',
+                        backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
+                        border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                      }}>
+                        <span
+                          onClick={() => setSelectedModel(m)}
+                          style={{ cursor: 'pointer', fontWeight: '500' }}
+                          title="クリックで選択"
+                        >
+                          {m.replace('ollama:', '')}
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
+                            padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold'
+                          }}
+                          title="削除"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Scrollable Model List (Hidden unless searching or focused) */}
+                  {(ollamaSearchQuery || isOllamaSeeking) && (
+                    <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
+                      {ollamaModels.filter(m => !ollamaSearchQuery || m.toLowerCase().includes(ollamaSearchQuery.toLowerCase())).map(m => (
+                        <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => setSelectedModel(m)}>
+                          <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m.replace('ollama:', '')}</span>
+                          <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
+                        </div>
+                      ))}
+                      {ollamaModels.filter(m => m.toLowerCase().includes(ollamaSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
+                    </div>
+                  )}
+                </div>
+
+                <p style={{ fontSize: '10px', color: '#666', textAlign: 'center', margin: '8px 0' }}>モデル名クリックで選択 / ★でお気に入り登録 → ホーム画面に表示</p>
 
                 {/* Alarm/Schedule Section */}
                 <div className="memory-section">
@@ -3581,6 +4251,9 @@ ${finalSystemPrompt}`
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <label className="setting-label" style={{ fontSize: '1rem', color: '#00897b' }}>音声読み上げ (TTS)</label>
                       <span style={{ fontSize: '0.7rem', backgroundColor: '#00897b', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Style-Bert-VITS2</span>
+                      <span style={{ fontSize: '0.75rem', color: ttsConnected ? '#4caf50' : '#999' }}>
+                        {ttsConnected ? '✅ 接続中' : '⚪ 未接続'}
+                      </span>
                     </div>
                   </div>
 
@@ -3601,13 +4274,39 @@ ${finalSystemPrompt}`
                       {/* API URL */}
                       <div>
                         <label style={{ fontSize: '0.8rem', color: '#666' }}>API URL</label>
-                        <input
-                          type="text"
-                          className="api-key-input"
-                          value={ttsApiUrl}
-                          onChange={(e) => setTtsApiUrl(e.target.value)}
-                          placeholder="http://127.0.0.1:5000"
-                        />
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <input
+                            type="text"
+                            className="api-key-input"
+                            value={ttsApiUrl}
+                            onChange={(e) => setTtsApiUrl(e.target.value)}
+                            placeholder="http://127.0.0.1:5000"
+                            style={{ flex: 1 }}
+                          />
+                          <button
+                            onClick={async () => {
+                              try {
+                                const isNgrok = ttsApiUrl.includes('ngrok')
+                                const headers = isNgrok ? { 'ngrok-skip-browser-warning': 'true' } : {}
+                                const res = await fetch(`${ttsApiUrl}/models/info`, { headers })
+                                if (res.ok) {
+                                  const data = await res.json()
+                                  setTtsConnected(true)
+                                  alert(`✅ TTS接続成功！\n利用可能モデル: ${Object.keys(data).join(', ')}`)
+                                } else {
+                                  setTtsConnected(false)
+                                  alert(`❌ TTS接続失敗 (HTTP ${res.status})`)
+                                }
+                              } catch (e) {
+                                setTtsConnected(false)
+                                alert(`❌ TTS接続失敗\n${e.message}\n\nStyle-Bert-VITS2が起動しているか確認してください`)
+                              }
+                            }}
+                            style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >
+                            🔌 接続テスト
+                          </button>
+                        </div>
                       </div>
                       {/* Model ID */}
                       <div>
@@ -3807,6 +4506,9 @@ ${finalSystemPrompt}`
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <label className="setting-label">Local LLM (Ollama)</label>
                       <span style={{ fontSize: '0.7rem', backgroundColor: '#eee', padding: '2px 6px', borderRadius: '4px' }}>Beta</span>
+                      <span style={{ fontSize: '0.75rem', color: ollamaConnected ? '#4caf50' : '#999' }}>
+                        {ollamaConnected ? '✅ 接続中' : '⚪ 未接続'}
+                      </span>
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
@@ -3866,6 +4568,42 @@ ${finalSystemPrompt}`
                     onChange={(e) => handleUpdateActiveProfile('name', e.target.value)}
                     placeholder="プロファイル名"
                   />
+                  {/* Profile Copy */}
+                  {/* Profile Copy */}
+                  {profiles.length > 1 && (
+                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #eee' }}>
+                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>コピー設定:</div>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '6px', fontSize: '11px' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={copyOptions.systemPrompt} onChange={(e) => setCopyOptions(prev => ({ ...prev, systemPrompt: e.target.checked }))} /> プロンプト
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={copyOptions.memory} onChange={(e) => setCopyOptions(prev => ({ ...prev, memory: e.target.checked }))} /> メモリ
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={copyOptions.visuals} onChange={(e) => setCopyOptions(prev => ({ ...prev, visuals: e.target.checked }))} /> 画像設定
+                        </label>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '12px', color: '#666' }}>コピー先:</span>
+                        <select
+                          style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleCopyProfileTo(e.target.value)
+                              e.target.value = ''
+                            }
+                          }}
+                          defaultValue=""
+                        >
+                          <option value="">選択して実行...</option>
+                          {profiles.filter(p => p.id !== activeProfile.id).map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 3. Icon Settings */}
@@ -4214,6 +4952,67 @@ ${finalSystemPrompt}`
                     placeholder="例: あなたは猫です。語尾にニャをつけてください。"
                     rows={3}
                   />
+                </div>
+
+                {/* 4.5. Translation Settings */}
+                <div className="memory-section">
+                  <div className="section-header">
+                    <Bot size={16} />
+                    <label className="setting-label">翻訳設定 (Ollama用)</label>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                        AIの一人称
+                      </label>
+                      <input
+                        type="text"
+                        value={firstPerson}
+                        onChange={(e) => setFirstPerson(e.target.value)}
+                        placeholder="俺"
+                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                        主の呼び方
+                      </label>
+                      <input
+                        type="text"
+                        value={masterTitle}
+                        onChange={(e) => setMasterTitle(e.target.value)}
+                        placeholder="主"
+                        style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '12px' }}>
+                    <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                      DeepL APIキー (優先翻訳エンジン)
+                    </label>
+                    <input
+                      type="password"
+                      value={deeplApiKey}
+                      onChange={(e) => setDeeplApiKey(e.target.value)}
+                      placeholder="DeepL APIキーを入力... (なくてもOK)"
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                    />
+                  </div>
+                  <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="checkbox"
+                      id="translationEnabled"
+                      checked={translationEnabled}
+                      onChange={(e) => setTranslationEnabled(e.target.checked)}
+                    />
+                    <label htmlFor="translationEnabled" style={{ fontSize: '12px', color: '#333' }}>
+                      Ollama使用時にAI応答を日本語に自動翻訳
+                    </label>
+                  </div>
+                  <p style={{ fontSize: '11px', color: '#888', margin: '8px 0 0 0' }}>
+                    ※翻訳後に「私」→「{firstPerson}」、「あなた」→「{masterTitle}」に自動置換。
+                    <br />※DeepL失敗時はGeminiで翻訳します。
+                  </p>
                 </div>
 
                 {/* 5. Long Term Memory */}
