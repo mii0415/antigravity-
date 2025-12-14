@@ -21,6 +21,21 @@
   }
 }
 
+/* Spinner animation */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1437,4 +1452,36 @@ textarea {
 .vn-stage {
   /* Ensure header doesn't cover face if image is tall */
   padding-top: 60px;
+
+}
+
+.app-container.visual-novel .chat-area {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.app-container.visual-novel .message-row {
+  max-width: 100%;
+  gap: 0;
+}
+
+.app-container.visual-novel .avatar {
+  display: none !important;
+}
+
+.app-container.visual-novel .message-content {
+  width: 100%;
+}
+
+.app-container.visual-novel .message-bubble-container {
+  width: 100%;
+  max-width: 100%;
+}
+
+.app-container.visual-novel .message-bubble {
+  width: 100%;
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 1rem;
+  line-height: 1.8;
 }

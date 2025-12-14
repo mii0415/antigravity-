@@ -4573,13 +4573,13 @@ ${finalSystemPrompt}`
                     <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #eee' }}>
                       <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>コピー設定:</div>
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '6px', fontSize: '11px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
                           <input type="checkbox" checked={copyOptions.systemPrompt} onChange={(e) => setCopyOptions(prev => ({ ...prev, systemPrompt: e.target.checked }))} /> プロンプト
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
                           <input type="checkbox" checked={copyOptions.memory} onChange={(e) => setCopyOptions(prev => ({ ...prev, memory: e.target.checked }))} /> メモリ
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
                           <input type="checkbox" checked={copyOptions.visuals} onChange={(e) => setCopyOptions(prev => ({ ...prev, visuals: e.target.checked }))} /> 画像設定
                         </label>
                       </div>

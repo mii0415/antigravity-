@@ -1,5 +1,6 @@
 // Service Worker for Antigravity
 // Allows for background notifications and PWA capabilities
+// Version: 2.0 (Force cache refresh)
 
 self.addEventListener('install', (event) => {
     // Force this SW to become the active one, bypassing the waiting state
