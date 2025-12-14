@@ -795,15 +795,27 @@ function App() {
 
       console.log(`⏰ Scheduled Notification Check: ${hour}:${String(minute).padStart(2, '0')}`)
 
-      // Target times: 7:00, 12:00, 22:00
-      const targets = [7, 12, 22]
+      // 時間帯を判定
+      // 朝: 7:00〜11:59, 昼: 12:00〜17:59, 夜: 18:00〜22:59
+      let timeSlot = null
+      let timeContext = ''
 
-      // 00分〜01分の間に実行 (1分間隔チェックなので漏らさないように)
-      if (targets.includes(hour) && minute <= 1) {
-        const key = `${now.toDateString()}-${hour}`
-        console.log(`⏰ Target time! Key: ${key}, Last: ${lastNotificationTime.current}`)
+      if (hour >= 7 && hour < 12) {
+        timeSlot = 'morning'
+        timeContext = '(Morning, Wake up)'
+      } else if (hour >= 12 && hour < 18) {
+        timeSlot = 'afternoon'
+        timeContext = '(Afternoon, Lunch time)'
+      } else if (hour >= 18 && hour < 23) {
+        timeSlot = 'evening'
+        timeContext = '(Evening, Night time)'
+      }
 
-        // まだ送信していない場合のみ
+      if (timeSlot) {
+        const key = `${now.toDateString()}-${timeSlot}`
+        console.log(`⏰ Time slot: ${timeSlot}, Key: ${key}, Last: ${lastNotificationTime.current}`)
+
+        // まだ送信していない場合のみ（同日・同時間帯は1回のみ）
         if (lastNotificationTime.current !== key) {
           // まずマークして二重送信防止
           lastNotificationTime.current = key
@@ -813,13 +825,32 @@ function App() {
           if (Notification.permission === "granted") {
             try {
               // Generate Message
-              const timeStr = `${hour}:00`
-              let timeContext = ''
-              if (hour === 7) timeContext = '(Morning, Wake up)'
-              if (hour === 12) timeContext = '(Lunch time)'
-              if (hour === 22) timeContext = '(Night, Sleep time soon)'
+              const timeStr = `${hour}:${String(minute).padStart(2, '0')}`
 
-              const promptText = `Current time is ${timeStr} ${timeContext}. The user is not looking at the screen. Send a short push notification greeting to the user. (e.g. Good morning!, It's lunch time!, Good night). Keep it under 40 characters. Speak in character.`
+              // イベント情報を取得
+              const month = now.getMonth() + 1 // 1-12
+              const day = now.getDate()
+              let eventInfo = ''
+
+              // 主要なイベントをチェック
+              if (month === 1 && day === 1) eventInfo = "Today is New Year's Day! (お正月)"
+              else if (month === 2 && day === 3) eventInfo = "Today is Setsubun! (節分) Time to throw beans!"
+              else if (month === 2 && day === 14) eventInfo = "Today is Valentine's Day! (バレンタインデー)"
+              else if (month === 3 && day === 3) eventInfo = "Today is Hinamatsuri! (ひな祭り)"
+              else if (month === 3 && day === 14) eventInfo = "Today is White Day! (ホワイトデー)"
+              else if (month === 4 && day === 1) eventInfo = "Today is April Fool's Day! (エイプリルフール)"
+              else if (month === 5 && day === 5) eventInfo = "Today is Children's Day! (こどもの日)"
+              else if (month === 7 && day === 7) eventInfo = "Today is Tanabata! (七夕)"
+              else if (month === 10 && day === 31) eventInfo = "Today is Halloween! (ハロウィン)"
+              else if (month === 11 && day === 11) eventInfo = "Today is Pocky Day! (ポッキーの日)"
+              else if (month === 12 && day === 2) eventInfo = "Today is Master's Birthday! (主の誕生日) Happy Birthday!"
+              else if (month === 12 && day === 24) eventInfo = "Today is Christmas Eve! (クリスマスイブ)"
+              else if (month === 12 && day === 25) eventInfo = "Today is Christmas! (クリスマス)"
+              else if (month === 12 && day === 31) eventInfo = "Today is New Year's Eve! (大晦日)"
+
+              const eventPrompt = eventInfo ? ` ${eventInfo} Mention this event naturally in your greeting.` : ''
+
+              const promptText = `Current time is ${timeStr} ${timeContext}.${eventPrompt} The user is not looking at the screen. Send a short push notification greeting to the user. (e.g. Good morning!, It's lunch time!, Good night). Keep it under 50 characters. Speak in character using Japanese.`
 
               // Use Gemini 2.5 Flash as requested (2025 Standard)
               const apiKey = await dbGet('antigravity_gemini_key') || ''
