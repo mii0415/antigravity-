@@ -1885,9 +1885,9 @@ The message must be consistent with your character persona and tone. (Max 1 shor
   }
 
   // --- HELPER: Fetch OpenRouter Models ---
-  const fetchOpenRouterModels = async () => {
+  const fetchOpenRouterModels = async (silent = false) => {
     if (!openRouterApiKey) {
-      alert('OpenRouter APIキーを設定してください')
+      if (!silent) alert('OpenRouter APIキーを設定してください')
       return
     }
     try {
@@ -1898,17 +1898,17 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       const data = await res.json()
       const models = data.data?.map(m => m.id) || []
       setOpenRouterModels(models)
-      alert(`✅ OpenRouter: ${models.length}個のモデルを取得しました`)
+      if (!silent) alert(`✅ OpenRouter: ${models.length}個のモデルを取得しました`)
     } catch (e) {
       console.error('OpenRouter fetch error:', e)
-      alert('❌ OpenRouterモデル取得失敗: ' + e.message)
+      if (!silent) alert('❌ OpenRouterモデル取得失敗: ' + e.message)
     }
   }
 
   // --- HELPER: Fetch Gemini Models ---
-  const fetchGeminiModels = async () => {
+  const fetchGeminiModels = async (silent = false) => {
     if (!apiKey) {
-      alert('Gemini APIキーを設定してください')
+      if (!silent) alert('Gemini APIキーを設定してください')
       return
     }
     try {
@@ -1917,10 +1917,10 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       const data = await res.json()
       const models = data.models?.filter(m => m.name.includes('gemini')).map(m => m.name.replace('models/', '')) || []
       setGeminiModels(models)
-      alert(`✅ Gemini: ${models.length}個のモデルを取得しました`)
+      if (!silent) alert(`✅ Gemini: ${models.length}個のモデルを取得しました`)
     } catch (e) {
       console.error('Gemini fetch error:', e)
-      alert('❌ Geminiモデル取得失敗: ' + e.message)
+      if (!silent) alert('❌ Geminiモデル取得失敗: ' + e.message)
     }
   }
 
@@ -1937,10 +1937,10 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       if (hasInitialSynced.current) return
 
       if (apiKey) {
-        fetchGeminiModels()
+        fetchGeminiModels(true)
       }
       if (openRouterApiKey) {
-        fetchOpenRouterModels()
+        fetchOpenRouterModels(true)
       }
       // Ollama is already handled above by ollamaUrl dependency
       hasInitialSynced.current = true
