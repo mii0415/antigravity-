@@ -398,6 +398,7 @@ function App() {
   const [isGeminiSeeking, setIsGeminiSeeking] = useState(false)
   const [isOrSeeking, setIsOrSeeking] = useState(false)
   const [isOllamaSeeking, setIsOllamaSeeking] = useState(false)
+  const [isNotifModelSeeking, setIsNotifModelSeeking] = useState(false)
 
   // --- STATE: UI Helpers ---
   const [previewImage, setPreviewImage] = useState(null)
@@ -4302,12 +4303,34 @@ ${finalSystemPrompt}`
                       onChange={(e) => setNotificationModel(e.target.value)}
                       placeholder={`現在のチャットモデル: ${selectedModel}`}
                       style={{ width: '100%' }}
+                      onFocus={() => setIsNotifModelSeeking(true)}
+                      onBlur={() => setTimeout(() => setIsNotifModelSeeking(false), 200)}
                     />
+                    {/* モデル候補一覧 */}
+                    {isNotifModelSeeking && (
+                      <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid #ddd', borderRadius: '4px', marginTop: '4px', background: '#fff' }}>
+                        {[...geminiModels, ...openRouterModels, ...ollamaModels.map(m => `ollama:${m}`)]
+                          .filter(m => !notificationModel || m.toLowerCase().includes(notificationModel.toLowerCase()))
+                          .slice(0, 20)
+                          .map(model => (
+                            <div
+                              key={model}
+                              onClick={() => { setNotificationModel(model); setIsNotifModelSeeking(false); }}
+                              style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', borderBottom: '1px solid #eee' }}
+                              onMouseOver={(e) => e.currentTarget.style.background = '#f0f0f0'}
+                              onMouseOut={(e) => e.currentTarget.style.background = '#fff'}
+                            >
+                              {model}
+                            </div>
+                          ))
+                        }
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
                       <button
-                        onClick={() => setNotificationModel('gemini-2.0-flash')}
+                        onClick={() => setNotificationModel('gemini-2.5-flash')}
                         style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: '4px', cursor: 'pointer' }}
-                      >Gemini 2.0 Flash</button>
+                      >Gemini 2.5 Flash</button>
                       <button
                         onClick={() => setNotificationModel('google/gemini-2.0-flash-exp:free')}
                         style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#fce4ec', border: '1px solid #f48fb1', borderRadius: '4px', cursor: 'pointer' }}
