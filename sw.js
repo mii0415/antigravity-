@@ -129,9 +129,11 @@ self.addEventListener('notificationclick', (event) => {
                     return client.focus()
                 }
             }
-            // Otherwise open a new window (if we supported deep linking, we'd do it here)
+            // Otherwise open a new window with correct base path for GitHub Pages
             if (clients.openWindow) {
-                return clients.openWindow('/')
+                // Use self.location to get the SW's base URL (works on both localhost and GH Pages)
+                const baseUrl = self.location.origin + new URL(self.location.href).pathname.replace(/\/sw\.js$/, '/')
+                return clients.openWindow(baseUrl)
             }
         })
     )
