@@ -434,7 +434,8 @@ function App() {
   const [copyOptions, setCopyOptions] = useState({
     systemPrompt: true,
     memory: true,
-    visuals: true // images, emotions, backgrounds
+    visuals: true, // images, emotions, backgrounds
+    userSettings: true // user profile, world settings, response style
   })
 
   // --- STATE: Translation ---
@@ -2192,6 +2193,7 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     if (copyOptions.systemPrompt) copyItems.push('システムプロンプト')
     if (copyOptions.memory) copyItems.push('メモリ')
     if (copyOptions.visuals) copyItems.push('画像・感情・背景設定')
+    if (copyOptions.userSettings) copyItems.push('ユーザー・世界観・応答スタイル')
 
     if (copyItems.length === 0) {
       alert('コピーする項目を選択してください')
@@ -2216,6 +2218,11 @@ The message must be consistent with your character persona and tone. (Max 1 shor
           updated.emotions = { ...activeProfile.emotions }
           updated.defaultEmotion = activeProfile.defaultEmotion
           updated.defaultBackground = activeProfile.defaultBackground
+        }
+        if (copyOptions.userSettings) {
+          updated.userProfile = activeProfile.userProfile
+          updated.worldSetting = activeProfile.worldSetting
+          updated.responseStyle = activeProfile.responseStyle
         }
         return updated
       }
@@ -4803,6 +4810,9 @@ ${finalSystemPrompt}`
                         </label>
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
                           <input type="checkbox" checked={copyOptions.visuals} onChange={(e) => setCopyOptions(prev => ({ ...prev, visuals: e.target.checked }))} /> 画像設定
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
+                          <input type="checkbox" checked={copyOptions.userSettings} onChange={(e) => setCopyOptions(prev => ({ ...prev, userSettings: e.target.checked }))} /> ユーザー＆世界観
                         </label>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

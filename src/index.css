@@ -777,7 +777,7 @@ textarea {
   align-items: center;
   gap: 8px;
   margin-top: 4px;
-  opacity: 0.8;
+  opacity: 0;
   min-height: 24px;
   /* Ensure touch target height */
 }
@@ -797,18 +797,16 @@ textarea {
   min-width: 120px;
 }
 
-.message-actions {
-  position: absolute;
-  bottom: 2px;
-  right: 4px;
-  display: flex;
-  gap: 4px;
-  opacity: 0.7;
-  transition: opacity 0.2s;
-}
-
+/* Message actions hover effect */
 .message-row:hover .message-actions {
   opacity: 1;
+}
+
+/* On mobile, always show actions (no hover) */
+@media (max-width: 768px) {
+  .message-actions {
+    opacity: 1 !important;
+  }
 }
 
 .action-btn {
@@ -817,10 +815,12 @@ textarea {
   color: inherit;
   opacity: 0.6;
   cursor: pointer;
-  padding: 2px;
+  padding: 4px;
   display: flex;
   align-items: center;
+  justify-content: center;
   border-radius: 4px;
+  transition: opacity 0.2s, background-color 0.2s;
 }
 
 .action-btn:hover {
