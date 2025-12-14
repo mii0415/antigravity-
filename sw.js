@@ -99,11 +99,15 @@ function notifyClients(type, data) {
 }
 
 // Show a notification
-function showNotification(title, body, tag = 'antigravity-notification') {
+function showNotification(title, body, tag = 'antigravity-notification', icon = null, badge = null) {
+    // Use GitHub Pages hosted icon as fallback
+    const GITHUB_PAGES_BASE = 'https://mii0415.github.io/antigravity-';
+    const defaultIcon = `${GITHUB_PAGES_BASE}/notification-icon.jpg`;
+
     self.registration.showNotification(title, {
         body,
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
+        icon: icon || defaultIcon,
+        badge: badge || defaultIcon,
         tag,
         requireInteraction: true,
         vibrate: [200, 100, 200]
@@ -139,14 +143,16 @@ self.addEventListener('notificationclick', (event) => {
     )
 })
 
-// Handle push notifications (for future server-side triggers)
+// Handle push notifications (from server)
 self.addEventListener('push', (event) => {
     const data = event.data?.json() || {}
     event.waitUntil(
         showNotification(
             data.title || 'Antigravity',
             data.body || 'New notification',
-            data.tag
+            data.tag,
+            data.icon,
+            data.badge
         )
     )
 })
