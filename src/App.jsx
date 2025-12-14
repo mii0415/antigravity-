@@ -793,12 +793,15 @@ function App() {
       const hour = now.getHours()
       const minute = now.getMinutes()
 
+      console.log(`⏰ Scheduled Notification Check: ${hour}:${String(minute).padStart(2, '0')}`)
+
       // Target times: 7:00, 12:00, 22:00
       const targets = [7, 12, 22]
 
       // 00分〜01分の間に実行 (1分間隔チェックなので漏らさないように)
       if (targets.includes(hour) && minute <= 1) {
         const key = `${now.toDateString()}-${hour}`
+        console.log(`⏰ Target time! Key: ${key}, Last: ${lastNotificationTime.current}`)
 
         // まだ送信していない場合のみ
         if (lastNotificationTime.current !== key) {
@@ -806,6 +809,7 @@ function App() {
           lastNotificationTime.current = key
 
           // 権限確認
+          console.log(`⏰ Notification permission: ${Notification.permission}`)
           if (Notification.permission === "granted") {
             try {
               // Generate Message
