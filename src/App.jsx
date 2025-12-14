@@ -480,7 +480,7 @@ function App() {
       // Live2D Settings
       dbGet('antigravity_live2d_enabled').then(v => { if (v !== undefined) setLive2dEnabled(v) })
       dbGet('antigravity_live2d_model_path').then(v => { if (v) setLive2dModelPath(v) })
-      dbGet('antigravity_live2d_expression').then(v => { if (v) setCurrentExpression(v) })
+      // Note: live2d_expression is loaded in a separate, guarded useEffect to prevent race conditions
       // Translation Settings
       dbGet('antigravity_translation_enabled').then(v => { if (v !== undefined) setTranslationEnabled(v) })
       dbGet('antigravity_translation_direction').then(v => { if (v) setTranslationDirection(v) })
@@ -2495,6 +2495,8 @@ The message must be consistent with your character persona and tone. (Max 1 shor
         if (live2dEnabled) {
           const live2dExpression = emotionToExpression[content] || emotionToExpression[content.toLowerCase()] || 'neutral'
           setCurrentExpression(live2dExpression)
+          // Immediately save to DB to prevent reset by other useEffects
+          dbSet('antigravity_live2d_expression', live2dExpression).catch(console.warn)
           console.log('Live2D Expression set to:', live2dExpression)
 
           // Direct call to Live2D model (bypass useEffect timing issues)
@@ -3203,18 +3205,62 @@ ${finalSystemPrompt}`
 
         // 残りのメッセージから最新のAIメッセージを探して表情・背景を復元
         const latestAiMessage = [...newMessages].reverse().find(m => m.sender === 'ai')
+        console.log('🗑️ Delete: latestAiMessage emotion =', latestAiMessage?.emotion)
         if (latestAiMessage) {
-          // 表情を復元
-          if (latestAiMessage.emotion) {
-            setCurrentEmotion(latestAiMessage.emotion)
+          // 保存されたemotionプロパティを優先、なければテキストから抽出
+          let lastEmotion = latestAiMessage.emotion || null
+          let lastBackground = null
+
+          // テキストから背景タグを抽出
+          if (latestAiMessage.text) {
+            const bgMatch = latestAiMessage.text.match(/[\[【]BG:\s*([^\]】]+)[\]】]/i)
+            if (bgMatch) {
+              lastBackground = bgMatch[1].trim()
+            }
           }
-          // 背景を復元（テキストから [BG: xxx] を抽出）
-          const bgMatch = latestAiMessage.text?.match(/\[BG:\s*([^\]]+)\]/)
-          if (bgMatch) {
-            setCurrentBackground(bgMatch[1].trim())
+
+          console.log('🗑️ Delete: lastEmotion =', lastEmotion, ', lastBackground =', lastBackground)
+
+          // 表情を復元
+          if (lastEmotion) {
+            // Live2D モード
+            if (live2dEnabled) {
+              // lastEmotionは既にemotionToExpressionでマッピング済みの値
+              setCurrentExpression(lastEmotion)
+              dbSet('antigravity_live2d_expression', lastEmotion).catch(console.warn)
+              if (live2dRef.current) {
+                try {
+                  live2dRef.current.setExpression(lastEmotion)
+                } catch (e) {
+                  console.warn('Failed to set expression:', e)
+                }
+              }
+            }
+            // 静的画像モード
+            const emotionKeys = Object.keys(activeProfile?.emotions || {})
+            const matchedKey = emotionKeys.find(key => key.toLowerCase() === lastEmotion.toLowerCase())
+            if (matchedKey) {
+              setCurrentEmotion(matchedKey)
+            }
+          }
+
+          // 背景を復元
+          if (lastBackground) {
+            setCurrentBackground(lastBackground)
           }
         } else {
           // AIメッセージがなくなったらデフォルトに戻す
+          if (live2dEnabled) {
+            setCurrentExpression('neutral')
+            dbSet('antigravity_live2d_expression', 'neutral').catch(console.warn)
+            if (live2dRef.current) {
+              try {
+                live2dRef.current.setExpression('neutral')
+              } catch (e) {
+                console.warn('Failed to reset expression:', e)
+              }
+            }
+          }
           setCurrentEmotion(activeProfile?.defaultEmotion || 'normal')
           setCurrentBackground(activeProfile?.defaultBackground || 'default')
         }
@@ -3294,6 +3340,9 @@ ${finalSystemPrompt}`
 
       detectAndSetEmotion(aiText)
 
+      // Extract emotion tag for message storage (for restore on delete)
+      const detectedEmotion = extractEmotionFromText(aiText)
+
       setMessages(prev => [
         ...prev,
         {
@@ -3303,7 +3352,8 @@ ${finalSystemPrompt}`
           model: selectedModel,
           profile: { name: activeProfile.name, iconImage: activeProfile.iconImage, iconSize: activeProfile.iconSize },
           variants: [aiText],
-          currentVariantIndex: 0
+          currentVariantIndex: 0,
+          emotion: detectedEmotion // Store emotion for restore on delete
         }
       ])
     } finally {
