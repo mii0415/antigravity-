@@ -435,7 +435,8 @@ function App() {
     systemPrompt: true,
     memory: true,
     visuals: true, // images, emotions, backgrounds
-    userSettings: true // user profile, world settings, response style
+    userProfile: true, // user profile (name, settings)
+    worldSetting: true // world setting & response style
   })
 
   // --- STATE: Translation ---
@@ -2193,7 +2194,8 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     if (copyOptions.systemPrompt) copyItems.push('システムプロンプト')
     if (copyOptions.memory) copyItems.push('メモリ')
     if (copyOptions.visuals) copyItems.push('画像・感情・背景設定')
-    if (copyOptions.userSettings) copyItems.push('ユーザー・世界観・応答スタイル')
+    if (copyOptions.userProfile) copyItems.push('ユーザー設定（主）')
+    if (copyOptions.worldSetting) copyItems.push('世界観・応答スタイル')
 
     if (copyItems.length === 0) {
       alert('コピーする項目を選択してください')
@@ -2219,8 +2221,10 @@ The message must be consistent with your character persona and tone. (Max 1 shor
           updated.defaultEmotion = activeProfile.defaultEmotion
           updated.defaultBackground = activeProfile.defaultBackground
         }
-        if (copyOptions.userSettings) {
+        if (copyOptions.userProfile) {
           updated.userProfile = activeProfile.userProfile
+        }
+        if (copyOptions.worldSetting) {
           updated.worldSetting = activeProfile.worldSetting
           updated.responseStyle = activeProfile.responseStyle
         }
@@ -4811,8 +4815,12 @@ ${finalSystemPrompt}`
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
                           <input type="checkbox" checked={copyOptions.visuals} onChange={(e) => setCopyOptions(prev => ({ ...prev, visuals: e.target.checked }))} /> 画像設定
                         </label>
+
                         <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
-                          <input type="checkbox" checked={copyOptions.userSettings} onChange={(e) => setCopyOptions(prev => ({ ...prev, userSettings: e.target.checked }))} /> ユーザー＆世界観
+                          <input type="checkbox" checked={copyOptions.userProfile} onChange={(e) => setCopyOptions(prev => ({ ...prev, userProfile: e.target.checked }))} /> ユーザー（主）など
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
+                          <input type="checkbox" checked={copyOptions.worldSetting} onChange={(e) => setCopyOptions(prev => ({ ...prev, worldSetting: e.target.checked }))} /> 世界観・スタイル
                         </label>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

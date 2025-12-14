@@ -777,7 +777,7 @@ textarea {
   align-items: center;
   gap: 8px;
   margin-top: 4px;
-  opacity: 0;
+  opacity: 0.4;
   min-height: 24px;
   /* Ensure touch target height */
 }
