@@ -1936,7 +1936,6 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     const timer = setTimeout(() => {
       if (hasInitialSynced.current) return
 
-      console.log('Auto-syncing models...')
       if (apiKey) {
         fetchGeminiModels()
       }
