@@ -1634,7 +1634,18 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       }
     }
 
-    if (!ttsEnabled || !ttsApiUrl || !text) {
+    if (!ttsEnabled) {
+      if (window.confirm('音声合成 (TTS) 機能が無効になっています。\n有効にしますか？')) {
+        // 設定画面への誘導が難しいため、簡易的に有効化を試みることもできるが、
+        // ここではアラートに留めるか、設定UIを開くstateを操作するのがベスト。
+        // 一旦アラートのみ。
+        alert('設定画面の「音声合成 (TTS) 設定」から有効に設定してください。')
+      }
+      return
+    }
+
+    if (!ttsApiUrl || !text) {
+      alert('TTS API URLが設定されていません。\n設定画面を確認してください。')
       console.warn('TTS Skipped:', { ttsEnabled, ttsApiUrl, text })
       return
     }
@@ -3917,15 +3928,14 @@ ${finalSystemPrompt}`
                         {msg.sender === 'ai' && (
                           <>
                             {/* TTS Replay Button */}
-                            {ttsEnabled && (
-                              <button
-                                className={`action-btn ${playingMessageId === msg.id ? 'active-tts' : ''}`}
-                                onClick={() => speakText(msg.text, msg.id)}
-                                title={playingMessageId === msg.id ? "読み上げ停止" : "読み上げ"}
-                              >
-                                {playingMessageId === msg.id ? <StopCircle size={12} color="#ef5350" /> : <Volume2 size={12} />}
-                              </button>
-                            )}
+                            {/* TTS Replay Button */}
+                            <button
+                              className={`action-btn ${playingMessageId === msg.id ? 'active-tts' : ''}`}
+                              onClick={() => speakText(msg.text, msg.id)}
+                              title={playingMessageId === msg.id ? "読み上げ停止" : "読み上げ"}
+                            >
+                              {playingMessageId === msg.id ? <StopCircle size={12} color="#ef5350" /> : <Volume2 size={12} />}
+                            </button>
                             <button className="action-btn" onClick={() => handleRegenerate(msg.id)} title="再生成">
                               <RotateCw size={12} />
                             </button>
