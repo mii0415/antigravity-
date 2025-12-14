@@ -417,6 +417,9 @@ function App() {
   const [temperature, setTemperature] = useState(0.7)
   const [touchReactionMode, setTouchReactionMode] = useState('fixed') // 'fixed' | 'ai'
 
+  // --- STATE: Notification/Touch AI Model (separate from main chat) ---
+  const [notificationModel, setNotificationModel] = useState('') // 空の場合はselectedModelを使用
+
   // --- STATE: TTS (Style-Bert-VITS2) ---
   const [ttsEnabled, setTtsEnabled] = useState(false)
   const [ttsApiUrl, setTtsApiUrl] = useState('http://127.0.0.1:5100')
@@ -488,8 +491,9 @@ function App() {
       dbGet('antigravity_first_person').then(v => { if (v) setFirstPerson(v) })
       dbGet('antigravity_master_title').then(v => { if (v) setMasterTitle(v) })
       dbGet('antigravity_deepl_key').then(v => { if (v) setDeeplApiKey(v) })
-      // Favorite Models
       dbGet('antigravity_favorite_models').then(v => { if (v) setFavoriteModels(v) })
+      // Notification Model
+      dbGet('antigravity_notification_model').then(v => { if (v) setNotificationModel(v) })
     }
   }, [isLoading])
 
@@ -852,14 +856,15 @@ function App() {
 
               const promptText = `Current time is ${timeStr} ${timeContext}.${eventPrompt} The user is not looking at the screen. Send a short push notification greeting to the user. (e.g. Good morning!, It's lunch time!, Good night). Keep it under 50 characters. Speak in character using Japanese.`
 
-              // selectedModel に基づいてAPIを呼び出す
+              // notificationModel が設定されていればそれを使用、なければ selectedModel
+              const modelToUse = notificationModel || selectedModel
               let responseText = ''
               try {
-                if (selectedModel.startsWith('ollama:')) {
-                  responseText = await callOllamaAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
-                } else if (selectedModel.includes('/') && !selectedModel.startsWith('models/')) {
+                if (modelToUse.startsWith('ollama:')) {
+                  responseText = await callOllamaAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, modelToUse)
+                } else if (modelToUse.includes('/') && !modelToUse.startsWith('models/')) {
                   // OpenRouter (contains slash but not models/ prefix)
-                  responseText = await callOpenRouterAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+                  responseText = await callOpenRouterAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, modelToUse)
                 } else {
                   // Gemini (default)
                   responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
@@ -920,6 +925,13 @@ function App() {
     if (isLoading) return
     dbSet('antigravity_dummy_user', dummyUserName).catch(console.warn)
   }, [dummyUserName, isLoading])
+
+  useEffect(() => {
+    if (isLoading) return
+    if (notificationModel !== undefined) {
+      dbSet('antigravity_notification_model', notificationModel).catch(console.warn)
+    }
+  }, [notificationModel, isLoading])
 
   // --- LIFECYCLE: Mobile Viewport Fix ---
   useEffect(() => {
@@ -1414,15 +1426,16 @@ Please generate a VERY SHORT notification message to the user informing them of 
 You SHOULD mention the season, temperature, or special event if applicable (especially Birthday, Christmas, New Year).
 The message must be consistent with your character persona and tone. (Max 1 short sentence)`
 
-      // selectedModel に基づいてAPIを呼び出す
+      // notificationModel が設定されていればそれを使用、なければ selectedModel
+      const modelToUse = notificationModel || selectedModel
       const systemPrompt = activeProfile.systemPrompt || 'You are a helpful assistant.'
       let generatedText = ''
       try {
-        if (selectedModel.startsWith('ollama:')) {
-          generatedText = await callOllamaAPI(prompt, systemPrompt, '', selectedModel)
-        } else if (selectedModel.includes('/') && !selectedModel.startsWith('models/')) {
+        if (modelToUse.startsWith('ollama:')) {
+          generatedText = await callOllamaAPI(prompt, systemPrompt, '', modelToUse)
+        } else if (modelToUse.includes('/') && !modelToUse.startsWith('models/')) {
           // OpenRouter
-          generatedText = await callOpenRouterAPI(prompt, systemPrompt, '', selectedModel)
+          generatedText = await callOpenRouterAPI(prompt, systemPrompt, '', modelToUse)
         } else {
           // Gemini (default)
           generatedText = await callGeminiAPI(prompt, systemPrompt, '')
@@ -2574,16 +2587,17 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     aiQueueRef.current = []
     aiTimerRef.current = null
 
-    // Call API
+    // Call API - notificationModel が設定されていればそれを使用
+    const modelToUse = notificationModel || selectedModel
     setIsLoading(true)
     let responseText = ''
     try {
-      if (selectedModel.startsWith('gemini')) {
+      if (modelToUse.startsWith('gemini') || (!modelToUse.includes('/') && !modelToUse.startsWith('ollama:'))) {
         responseText = await callGeminiAPI(combinedPrompt, activeProfile.systemPrompt, activeProfile.memory)
-      } else if (selectedModel.startsWith('ollama:')) {
-        responseText = await callOllamaAPI(combinedPrompt, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+      } else if (modelToUse.startsWith('ollama:')) {
+        responseText = await callOllamaAPI(combinedPrompt, activeProfile.systemPrompt, activeProfile.memory, modelToUse)
       } else {
-        responseText = await callOpenRouterAPI(combinedPrompt, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+        responseText = await callOpenRouterAPI(combinedPrompt, activeProfile.systemPrompt, activeProfile.memory, modelToUse)
       }
     } catch (e) {
       console.error("AI Buffer Error", e)
@@ -2596,7 +2610,7 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     if (!responseText) return
 
     // Ollama使用時は翻訳を適用 (EN→JA)
-    if (selectedModel.startsWith('ollama:') && translationEnabled) {
+    if (modelToUse.startsWith('ollama:') && translationEnabled) {
       try {
         const translatedText = await translateText(responseText, 'EN-JA')
         if (translatedText && translatedText !== responseText) {
@@ -4275,6 +4289,35 @@ ${finalSystemPrompt}`
                     ※このページを開いている間は、設定画面を閉じても有効です。時間になるとキャラが話しかけます。<br />
                     <strong style={{ color: '#e65100' }}>【スマホの方へ】</strong> 通知が出ない場合は、ブラウザのメニューから<strong>「ホーム画面に追加」</strong>して、アプリアイコンから起動してください。
                   </p>
+                  {/* Notification AI Model Selector */}
+                  <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px dashed #ccc' }}>
+                    <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#e65100' }}>通知/タッチ用AIモデル</label>
+                    <p style={{ fontSize: '0.7rem', color: '#888', marginBottom: '4px' }}>
+                      時報・アラーム・タッチ反応で使用するモデルを指定できます。空の場合はチャット用モデルを使用。
+                    </p>
+                    <input
+                      type="text"
+                      className="api-key-input"
+                      value={notificationModel}
+                      onChange={(e) => setNotificationModel(e.target.value)}
+                      placeholder={`現在のチャットモデル: ${selectedModel}`}
+                      style={{ width: '100%' }}
+                    />
+                    <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => setNotificationModel('gemini-2.0-flash')}
+                        style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: '4px', cursor: 'pointer' }}
+                      >Gemini 2.0 Flash</button>
+                      <button
+                        onClick={() => setNotificationModel('google/gemini-2.0-flash-exp:free')}
+                        style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#fce4ec', border: '1px solid #f48fb1', borderRadius: '4px', cursor: 'pointer' }}
+                      >OR: Gemini Free</button>
+                      <button
+                        onClick={() => setNotificationModel('')}
+                        style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
+                      >チャットと同じ</button>
+                    </div>
+                  </div>
                 </div>
 
 
