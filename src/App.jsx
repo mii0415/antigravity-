@@ -3198,7 +3198,29 @@ ${finalSystemPrompt}`
   // --- HANDLERS: Chat ---
   const handleDeleteMessage = (id) => {
     if (window.confirm('このメッセージを削除しますか？')) {
-      setMessages(prev => prev.filter(m => m.id !== id))
+      setMessages(prev => {
+        const newMessages = prev.filter(m => m.id !== id)
+
+        // 残りのメッセージから最新のAIメッセージを探して表情・背景を復元
+        const latestAiMessage = [...newMessages].reverse().find(m => m.sender === 'ai')
+        if (latestAiMessage) {
+          // 表情を復元
+          if (latestAiMessage.emotion) {
+            setCurrentEmotion(latestAiMessage.emotion)
+          }
+          // 背景を復元（テキストから [BG: xxx] を抽出）
+          const bgMatch = latestAiMessage.text?.match(/\[BG:\s*([^\]]+)\]/)
+          if (bgMatch) {
+            setCurrentBackground(bgMatch[1].trim())
+          }
+        } else {
+          // AIメッセージがなくなったらデフォルトに戻す
+          setCurrentEmotion(activeProfile?.defaultEmotion || 'normal')
+          setCurrentBackground(activeProfile?.defaultBackground || 'default')
+        }
+
+        return newMessages
+      })
     }
   }
 
