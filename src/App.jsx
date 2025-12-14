@@ -1592,6 +1592,30 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     return cleaned
   }
 
+  // Build enhanced system prompt with user profile, world setting, and response style
+  const buildEnhancedSystemPrompt = (basePrompt, profile) => {
+    let enhanced = basePrompt || ''
+
+    // Add user profile if set
+    if (profile?.userProfile) {
+      enhanced += `\n\n【ユーザー（主）の設定】\n${profile.userProfile}`
+    }
+
+    // Add world setting if set
+    if (profile?.worldSetting) {
+      enhanced += `\n\n【世界観設定】\n${profile.worldSetting}`
+    }
+
+    // Add response style instruction
+    if (profile?.responseStyle === 'novel') {
+      enhanced += '\n\n【応答スタイル】三人称の小説形式で応答してください。情景描写や心理描写を含め、物語風の文体で書いてください。'
+    } else {
+      enhanced += '\n\n【応答スタイル】一人称のキャラクターとして会話形式で応答してください。'
+    }
+
+    return enhanced
+  }
+
   const speakText = async (text, messageId = null) => {
     // Simply stop existing audio if new one is requested
     if (currentAudioRef.current) {
@@ -2149,7 +2173,11 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       backgrounds: {},
       emotions: {},
       defaultEmotion: null,
-      defaultBackground: null
+      defaultBackground: null,
+      // New fields
+      userProfile: '', // ユーザーの設定（名前、性格など）
+      worldSetting: '', // 世界観設定
+      responseStyle: 'chat' // 'chat' | 'novel'
     }
     setProfiles(prev => [...prev, newProfile])
     setActiveProfileId(newId)
@@ -3376,13 +3404,14 @@ ${finalSystemPrompt}`
     setIsLoading(true)
     try {
       let aiText = ''
+      const enhancedPrompt = buildEnhancedSystemPrompt(activeProfile.systemPrompt, activeProfile)
       if (selectedModel.startsWith('ollama:')) {
-        aiText = await callOllamaAPI(userTextContext || "...", activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+        aiText = await callOllamaAPI(userTextContext || "...", enhancedPrompt, activeProfile.memory, selectedModel)
       } else if (selectedModel.includes('/') && !selectedModel.startsWith('models/')) {
         // OpenRouter (contains slash but not models/ prefix)
-        aiText = await callOpenRouterAPI(userTextContext || "...", activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+        aiText = await callOpenRouterAPI(userTextContext || "...", enhancedPrompt, activeProfile.memory, selectedModel)
       } else {
-        aiText = await callGeminiAPI(userTextContext || "...", activeProfile.systemPrompt, activeProfile.memory)
+        aiText = await callGeminiAPI(userTextContext || "...", enhancedPrompt, activeProfile.memory)
       }
 
       detectAndSetEmotion(aiText)
@@ -3426,12 +3455,13 @@ ${finalSystemPrompt}`
     setIsLoading(true)
     try {
       let newVariant = ''
+      const enhancedPrompt = buildEnhancedSystemPrompt(activeProfile.systemPrompt, activeProfile)
       if (selectedModel.startsWith('ollama:')) {
-        newVariant = await callOllamaAPI(context, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+        newVariant = await callOllamaAPI(context, enhancedPrompt, activeProfile.memory, selectedModel)
       } else if (selectedModel.includes('/') && !selectedModel.startsWith('models/')) {
-        newVariant = await callOpenRouterAPI(context, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+        newVariant = await callOpenRouterAPI(context, enhancedPrompt, activeProfile.memory, selectedModel)
       } else {
-        newVariant = await callGeminiAPI(context, activeProfile.systemPrompt, activeProfile.memory)
+        newVariant = await callGeminiAPI(context, enhancedPrompt, activeProfile.memory)
       }
 
       detectAndSetEmotion(newVariant)
@@ -5145,7 +5175,73 @@ ${finalSystemPrompt}`
                   />
                 </div>
 
-                {/* 4.5. Translation Settings */}
+                {/* 4.1. User Profile & World Setting */}
+                <div className="memory-section">
+                  <div className="section-header">
+                    <Bot size={16} />
+                    <label className="setting-label">ユーザー & 世界観設定</label>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                        ユーザー設定（主の設定）
+                      </label>
+                      <textarea
+                        className="system-prompt-input"
+                        value={activeProfile.userProfile || ''}
+                        onChange={(e) => handleUpdateActiveProfile('userProfile', e.target.value)}
+                        placeholder="例: 名前は「蒼月 柊」。本丸の審神者。温厚で優しい性格。"
+                        rows={2}
+                        style={{ marginBottom: '4px' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                        世界観設定
+                      </label>
+                      <textarea
+                        className="system-prompt-input"
+                        value={activeProfile.worldSetting || ''}
+                        onChange={(e) => handleUpdateActiveProfile('worldSetting', e.target.value)}
+                        placeholder="例: 現代の本丸。二人きりで暮らしている。"
+                        rows={2}
+                        style={{ marginBottom: '4px' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                        応答スタイル
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handleUpdateActiveProfile('responseStyle', 'chat')}
+                          style={{
+                            flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                            backgroundColor: (activeProfile.responseStyle || 'chat') === 'chat' ? '#e3f2fd' : '#f5f5f5',
+                            color: (activeProfile.responseStyle || 'chat') === 'chat' ? '#1565c0' : '#666',
+                            fontWeight: 'bold', cursor: 'pointer'
+                          }}
+                        >
+                          💬 チャット形式
+                        </button>
+                        <button
+                          onClick={() => handleUpdateActiveProfile('responseStyle', 'novel')}
+                          style={{
+                            flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                            backgroundColor: activeProfile.responseStyle === 'novel' ? '#fce4ec' : '#f5f5f5',
+                            color: activeProfile.responseStyle === 'novel' ? '#c2185b' : '#666',
+                            fontWeight: 'bold', cursor: 'pointer'
+                          }}
+                        >
+                          📖 小説形式
+                        </button>
+                      </div>
+                      <p style={{ fontSize: '0.7rem', color: '#888', marginTop: '4px' }}>
+                        チャット形式: 一人称の会話。小説形式: 三人称の物語風描写。
+                      </p>
+                    </div>
+                  </div>
+                </div>
                 <div className="memory-section">
                   <div className="section-header">
                     <Bot size={16} />
