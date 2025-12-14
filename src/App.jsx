@@ -852,51 +852,35 @@ function App() {
 
               const promptText = `Current time is ${timeStr} ${timeContext}.${eventPrompt} The user is not looking at the screen. Send a short push notification greeting to the user. (e.g. Good morning!, It's lunch time!, Good night). Keep it under 50 characters. Speak in character using Japanese.`
 
-              // Use Gemini 2.5 Flash as requested (2025 Standard)
-              const apiKey = await dbGet('antigravity_gemini_key') || ''
-              if (apiKey) {
-                const genAI = new GoogleGenerativeAI(apiKey)
-                const model = genAI.getGenerativeModel({
-                  model: 'gemini-2.5-flash',
-                  systemInstruction: activeProfile.systemPrompt
-                })
-
-                const result = await model.generateContent(promptText)
-                const responseText = result.response.text()
-
-                if (responseText) {
-                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
-                  if (cleanText) {
-                    // タイトルにAI生成の挨拶を使用
-                    const notifTitle = cleanText.length > 30 ? cleanText.substring(0, 30) + '…' : cleanText
-                    const n = new Notification(notifTitle, { body: cleanText, icon: activeProfile.iconImage });
-                    n.onclick = (e) => {
-                      e.preventDefault(); // Prevent browser default handling if any
-                      window.focus();
-                      console.log('Notification clicked (Gemini key). Creating session with:', cleanText);
-                      handleCreateSession(cleanText);
-                      n.close();
-                    };
-                  }
+              // selectedModel に基づいてAPIを呼び出す
+              let responseText = ''
+              try {
+                if (selectedModel.startsWith('ollama:')) {
+                  responseText = await callOllamaAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+                } else if (selectedModel.includes('/') && !selectedModel.startsWith('models/')) {
+                  // OpenRouter (contains slash but not models/ prefix)
+                  responseText = await callOpenRouterAPI(promptText, activeProfile.systemPrompt, activeProfile.memory, selectedModel)
+                } else {
+                  // Gemini (default)
+                  responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
                 }
-              } else if (selectedModel.startsWith('gemini')) {
-                // Fallback to existing logic if NO key but Gemini is selected
-                // (Assuming callGeminiAPI handles something or just fail gracefully)
-                let responseText = await callGeminiAPI(promptText, activeProfile.systemPrompt, activeProfile.memory)
-                if (responseText) {
-                  const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
-                  if (cleanText) {
-                    // タイトルにAI生成の挨拶を使用
-                    const notifTitle = cleanText.length > 30 ? cleanText.substring(0, 30) + '…' : cleanText
-                    const n = new Notification(notifTitle, { body: cleanText, icon: activeProfile.iconImage });
-                    n.onclick = (e) => {
-                      e.preventDefault();
-                      window.focus();
-                      console.log('Notification clicked (Fallback). Creating session with:', cleanText);
-                      handleCreateSession(cleanText);
-                      n.close();
-                    };
-                  }
+              } catch (apiError) {
+                console.error('Notification API call failed:', apiError)
+              }
+
+              if (responseText) {
+                const cleanText = responseText.replace(/[\[【].*?[\]】]/g, '').trim()
+                if (cleanText) {
+                  // タイトルにAI生成の挨拶を使用
+                  const notifTitle = cleanText.length > 30 ? cleanText.substring(0, 30) + '…' : cleanText
+                  const n = new Notification(notifTitle, { body: cleanText, icon: activeProfile.iconImage });
+                  n.onclick = (e) => {
+                    e.preventDefault();
+                    window.focus();
+                    console.log('Notification clicked. Creating session with:', cleanText);
+                    handleCreateSession(cleanText);
+                    n.close();
+                  };
                 }
               }
             } catch (e) {
@@ -1430,10 +1414,23 @@ Please generate a VERY SHORT notification message to the user informing them of 
 You SHOULD mention the season, temperature, or special event if applicable (especially Birthday, Christmas, New Year).
 The message must be consistent with your character persona and tone. (Max 1 short sentence)`
 
-      // Call Gemini API with FORCED MODEL 'gemini-2.5-flash'
+      // selectedModel に基づいてAPIを呼び出す
       const systemPrompt = activeProfile.systemPrompt || 'You are a helpful assistant.'
-      // Pass FORCE override as 4th argument
-      const generatedText = await callGeminiAPI(prompt, systemPrompt, '', 'gemini-2.5-flash')
+      let generatedText = ''
+      try {
+        if (selectedModel.startsWith('ollama:')) {
+          generatedText = await callOllamaAPI(prompt, systemPrompt, '', selectedModel)
+        } else if (selectedModel.includes('/') && !selectedModel.startsWith('models/')) {
+          // OpenRouter
+          generatedText = await callOpenRouterAPI(prompt, systemPrompt, '', selectedModel)
+        } else {
+          // Gemini (default)
+          generatedText = await callGeminiAPI(prompt, systemPrompt, '')
+        }
+      } catch (apiError) {
+        console.error('Alarm AI call failed:', apiError)
+        generatedText = 'お時間です！'
+      }
 
       const messageText = `【お知らせ】${timeString} になりました！\n${generatedText}`
 
