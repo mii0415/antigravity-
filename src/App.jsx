@@ -4306,12 +4306,34 @@ ${finalSystemPrompt}`
                       onFocus={() => setIsNotifModelSeeking(true)}
                       onBlur={() => setTimeout(() => setIsNotifModelSeeking(false), 200)}
                     />
-                    {/* モデル候補一覧 */}
+                    {/* モデル候補一覧（お気に入り優先） */}
                     {isNotifModelSeeking && (
                       <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid #ddd', borderRadius: '4px', marginTop: '4px', background: '#fff' }}>
+                        {/* お気に入りモデル */}
+                        {favoriteModels.length > 0 && (
+                          <>
+                            <div style={{ padding: '4px 8px', fontSize: '0.7rem', color: '#888', background: '#fffde7', borderBottom: '1px solid #ffeb3b' }}>★ お気に入り</div>
+                            {favoriteModels
+                              .filter(m => !notificationModel || m.toLowerCase().includes(notificationModel.toLowerCase()))
+                              .map(model => (
+                                <div
+                                  key={`fav-${model}`}
+                                  onClick={() => { setNotificationModel(model); setIsNotifModelSeeking(false); }}
+                                  style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', borderBottom: '1px solid #eee', background: '#fffef0' }}
+                                  onMouseOver={(e) => e.currentTarget.style.background = '#fff8c4'}
+                                  onMouseOut={(e) => e.currentTarget.style.background = '#fffef0'}
+                                >
+                                  ★ {model}
+                                </div>
+                              ))
+                            }
+                          </>
+                        )}
+                        {/* 全モデル（お気に入り除外） */}
                         {[...geminiModels, ...openRouterModels, ...ollamaModels.map(m => `ollama:${m}`)]
+                          .filter(m => !favoriteModels.includes(m))
                           .filter(m => !notificationModel || m.toLowerCase().includes(notificationModel.toLowerCase()))
-                          .slice(0, 20)
+                          .slice(0, 15)
                           .map(model => (
                             <div
                               key={model}
