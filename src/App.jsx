@@ -4138,7 +4138,7 @@ Response must be short (under 30 chars). ${tagInstruction}`
           <button className="header-icon-btn" onClick={() => setIsFolderOpen(prev => !prev)} style={{ right: 'auto', left: '16px' }}>
             <Menu size={24} />
           </button>
-          <h1>Antigravity</h1>
+          <h1>Antigravity <span style={{ fontSize: '0.5em', color: '#ccc' }}>v1.1</span></h1>
           <div className="model-selector">
             <select
               value={selectedModel}
