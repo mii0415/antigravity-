@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { dbGet, dbSet, dbDel, dbKeys } from './db'
-import { Bell, Send, Folder, FolderOpen, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLeft, ChevronRight, Brain, Trash2, Image, Files, Book, Plus, Settings, Upload, Crop, Check, ZoomIn, Move, Edit2, Save, RotateCw, RefreshCw, Key, Loader, Star, DownloadCloud, Menu, MessageSquare, Volume2, StopCircle, Globe } from 'lucide-react'
+import { Bell, Send, Folder, FolderOpen, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLeft, ChevronRight, Brain, Trash2, Image, Files, Book, Plus, Settings, Upload, Crop, Check, ZoomIn, Move, Edit2, Save, RotateCw, RefreshCw, Key, Loader, Star, DownloadCloud, Menu, MessageSquare, Volume2, StopCircle, Globe, Server } from 'lucide-react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import Live2DCanvas from './Live2DCanvas'
 import './index.css'
