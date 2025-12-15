@@ -4,21 +4,59 @@ import cors from 'cors';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { spawn } from 'child_process';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 dotenv.config();
+
+// ESM fix for __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 8080; // Local Gateway Port
 
-// Enable CORS for your GitHub Pages URL and localhost
+// Enable CORS for local network access (simplifies phone connection)
 app.use(cors({
-    origin: [
-        'http://localhost:5173',
-        'http://localhost:4173',
-        'https://mii0415.github.io'
-    ]
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS']
 }));
 
 app.use(express.json());
+
+// DEBUG LOGGING
+app.use((req, res, next) => {
+    console.log(`[Request] ${req.method} ${req.url}`);
+    next();
+});
+
+// --- SERVE FRONTEND (STATIC FILES) ---
+const distPath = path.join(__dirname, 'dist');
+console.log('Serving static files from:', distPath);
+
+// Mount at /antigravity-/ to match vite.config.js base
+app.use('/antigravity-/', express.static(distPath));
+
+// Explicit Index Handler for the root of the base path
+app.get('/antigravity-/', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+});
+
+// SPA Fallback (Catch-all)
+app.use((req, res, next) => {
+    if (req.method !== 'GET') return next();
+    if (req.path.startsWith('/api')) return next();
+    // Redirect root to base path if needed
+    if (req.path === '/') return res.redirect('/antigravity-/');
+
+    // Serve index.html for all other non-api GET requests (client-side routing)
+    res.sendFile(path.join(distPath, 'index.html'));
+});
+
+// Root redirect
+app.get('/', (req, res) => {
+    res.redirect('/antigravity-/');
+});
 
 const apiKey = process.env.GEMINI_API_KEY;
 

@@ -641,7 +641,12 @@ function App() {
         console.log('🚀 Routing to Gateway:', gatewayUrl)
         const response = await fetch(`${gatewayUrl}/api/gemini-proxy`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            // Headers to bypass ngrok/localtunnel warning pages
+            'ngrok-skip-browser-warning': 'true',
+            'Bypass-Tunnel-Reminder': 'true'
+          },
           body: JSON.stringify({
             message: userMessage,
             systemPrompt: systemPrompt + (context ? `\n\nContext: ${context}` : ''),
