@@ -66,6 +66,8 @@ body {
   background-color: var(--bg-color);
   position: relative;
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  /* Prevent container from scrolling */
 }
 
 /* Header */

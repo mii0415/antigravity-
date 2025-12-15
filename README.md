@@ -1,16 +1,42 @@
-# React + Vite
+# Antigravity App - Phantom Sunspot
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Advanced Live2D & AI Chat Interface (React + Vite)
 
-Currently, two official plugins are available:
+## 🌐 How to Use (Hybrid Mode)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+This app can be used in two ways:
 
-## React Compiler
+### 1. Web Mode (Easy)
+- **URL**: `https://mii0415.github.io/antigravity-`
+- **Configuration**:
+    - Open Settings (Gear Icon).
+    - Enter your **Gemini API Key**.
+- **Features**: Chat, Live2D, Basic Memory.
+- **Limitations**: Runs entirely in your browser using the public API.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 2. Power Mode (Local Gateway)
+Unlock advanced features like **Gemini 3.0**, **CLI integration**, or **Local Models** (Ollama) by running a bridge on your PC.
 
-## Expanding the ESLint configuration
+1. Clone this repository to your PC.
+2. Create a `.env` file and add your powerful API key:
+   ```
+   GEMINI_API_KEY=your_key_here
+   ```
+3. Run the gateway server:
+   ```bash
+   node server.js
+   ```
+4. Open the Web App (or localhost). It will automatically detect the gateway and switch to **"Hybrid Mode"**.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Run frontend only
+npm run dev
+
+# Run full hybrid stack
+node server.js
+```
