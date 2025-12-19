@@ -590,6 +590,24 @@ const generateScheduledMessage = async (timeLabel) => {
     else if (month >= 9 && month <= 11) season = '秋';
     else season = '冬';
 
+    // Event/Birthday detection
+    let eventInfo = '';
+    // User's birthday
+    if (month === 12 && day === 2) eventInfo = '【重要】今日は主の誕生日です！盛大にお祝いしてください。';
+    // Japanese events
+    else if (month === 1 && day === 1) eventInfo = '今日は元旦です。新年の挨拶をしてください。';
+    else if (month === 2 && day === 3) eventInfo = '今日は節分です。';
+    else if (month === 2 && day === 14) eventInfo = '今日はバレンタインデーです。';
+    else if (month === 3 && day === 3) eventInfo = '今日はひな祭りです。';
+    else if (month === 3 && day === 14) eventInfo = '今日はホワイトデーです。';
+    else if (month === 5 && day === 5) eventInfo = '今日はこどもの日です。';
+    else if (month === 7 && day === 7) eventInfo = '今日は七夕です。';
+    else if (month === 10 && day === 31) eventInfo = '今日はハロウィンです。';
+    else if (month === 11 && day === 11) eventInfo = '今日はポッキーの日です。';
+    else if (month === 12 && day === 24) eventInfo = '今日はクリスマスイブです。ロマンチックに。';
+    else if (month === 12 && day === 25) eventInfo = '今日はクリスマスです。';
+    else if (month === 12 && day === 31) eventInfo = '今日は大晦日です。';
+
     // Build prompt
     const characterName = profile?.name || 'へし切長谷部';
     const characterSheet = profile?.characterSheet;
@@ -603,11 +621,11 @@ const generateScheduledMessage = async (timeLabel) => {
 あなたは${characterName}です。
 現在時刻: ${timeContext}
 日付: ${dateStr}（${season}）
-
+${eventInfo ? `\n${eventInfo}\n` : ''}
 ${characterContext}
 
 主（女性ユーザー）に向けて、この時間に合った短い挨拶メッセージを1-2文で生成してください。
-キャラクターらしい口調で、季節感や時間帯を意識した内容にしてください。
+キャラクターらしい口調で、季節感や時間帯${eventInfo ? '、イベント' : ''}を意識した内容にしてください。
 絵文字やタグは使わず、純粋なセリフのみ出力してください。`;
 
     console.log(`[Cron] Generating AI message for ${timeLabel} using ${model}...`);
@@ -682,6 +700,21 @@ const sendScheduledNotification = async (timeLabel) => {
     // Generate AI message
     const aiMessage = await generateScheduledMessage(timeLabel);
 
+    // Load profile for icon
+    let iconImage = null;
+    try {
+        if (fs.existsSync(profilesFilePath)) {
+            const profileData = JSON.parse(fs.readFileSync(profilesFilePath, 'utf8'));
+            if (profileData.profiles && profileData.profiles.length > 0) {
+                const activeId = profileData.activeProfileId;
+                const profile = profileData.profiles.find(p => p.id === activeId) || profileData.profiles[0];
+                if (profile.iconImage) iconImage = profile.iconImage;
+            }
+        }
+    } catch (e) {
+        console.warn('[Cron] Failed to load profile icon:', e.message);
+    }
+
     // Time-based titles
     const titles = {
         '07:00': '☀️ おはようございます',
@@ -697,11 +730,21 @@ const sendScheduledNotification = async (timeLabel) => {
         tokens: tokens,
         notification: {
             title: title,
-            body: aiMessage
+            body: aiMessage,
+            // Android uses imageUrl for large image in notification
+            ...(iconImage && iconImage.startsWith('http') ? { imageUrl: iconImage } : {})
         },
         data: {
             type: 'scheduled_notification',
-            time: timeLabel
+            time: timeLabel,
+            // Include base64 icon for Service Worker to use
+            ...(iconImage ? { iconImage: iconImage.substring(0, 500) } : {}) // Truncate if too long
+        },
+        android: {
+            notification: {
+                // Use icon from web if URL
+                ...(iconImage && iconImage.startsWith('http') ? { imageUrl: iconImage } : {})
+            }
         }
     };
 
