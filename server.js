@@ -9,6 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import admin from 'firebase-admin';
+import cron from 'node-cron';
 
 dotenv.config();
 
@@ -541,3 +542,87 @@ if (fs.existsSync(certPath)) {
 } else {
     console.log('ℹ️ No HTTPS certificate found. Run with HTTP only.');
 }
+
+// --- SCHEDULED NOTIFICATIONS (時報) ---
+// Runs at 7:00, 12:00, 18:00, 22:00 JST (server timezone)
+
+const sendScheduledNotification = async (timeLabel) => {
+    if (!admin.apps.length) {
+        console.log('[Cron] Firebase not initialized, skipping notification');
+        return;
+    }
+
+    // Load FCM tokens
+    let tokens = [];
+    try {
+        if (fs.existsSync(fcmTokensFilePath)) {
+            tokens = JSON.parse(fs.readFileSync(fcmTokensFilePath, 'utf8'));
+        }
+    } catch (e) {
+        console.warn('[Cron] Failed to load FCM tokens:', e.message);
+        return;
+    }
+
+    if (tokens.length === 0) {
+        console.log('[Cron] No FCM tokens registered, skipping notification');
+        return;
+    }
+
+    // Time-based messages
+    const messages = {
+        '07:00': { title: '☀️ おはようございます', body: '主、そろそろ起きる時間ですよ。俺が朝のご挨拶に参りました。' },
+        '12:00': { title: '🍱 お昼の時間です', body: '主、昼食はお済みですか？しっかり食べてくださいね。' },
+        '18:00': { title: '🌆 夕方のお知らせ', body: '主、今日も一日お疲れ様でした。少し休憩しませんか？' },
+        '22:00': { title: '🌙 おやすみの時間です', body: '主、そろそろお休みの時間ですよ。ゆっくり休んでくださいね。' }
+    };
+
+    const msg = messages[timeLabel] || { title: '⏰ 時報', body: `${timeLabel} になりました。` };
+
+    console.log(`[Cron] Sending scheduled notification for ${timeLabel} to ${tokens.length} devices`);
+
+    const payload = {
+        tokens: tokens,
+        notification: {
+            title: msg.title,
+            body: msg.body
+        },
+        data: {
+            type: 'scheduled_notification',
+            time: timeLabel
+        }
+    };
+
+    try {
+        const response = await admin.messaging().sendEachForMulticast(payload);
+        console.log(`[Cron] ${timeLabel} notification sent: ${response.successCount} success, ${response.failureCount} failed`);
+    } catch (e) {
+        console.error('[Cron] Failed to send notification:', e.message);
+    }
+};
+
+// Schedule: minute hour * * * (JST timezone assumed on server)
+// 7:00 AM
+cron.schedule('0 7 * * *', () => {
+    console.log('[Cron] 7:00 AM - Morning notification');
+    sendScheduledNotification('07:00');
+});
+
+// 12:00 PM
+cron.schedule('0 12 * * *', () => {
+    console.log('[Cron] 12:00 PM - Lunch notification');
+    sendScheduledNotification('12:00');
+});
+
+// 6:00 PM
+cron.schedule('0 18 * * *', () => {
+    console.log('[Cron] 6:00 PM - Evening notification');
+    sendScheduledNotification('18:00');
+});
+
+// 10:00 PM
+cron.schedule('0 22 * * *', () => {
+    console.log('[Cron] 10:00 PM - Night notification');
+    sendScheduledNotification('22:00');
+});
+
+console.log('⏰ Scheduled notifications enabled: 7:00, 12:00, 18:00, 22:00');
