@@ -600,7 +600,7 @@ function App() {
   const [customOpenRouterModel, setCustomOpenRouterModel] = useState('')
 
   // --- STATE: Ollama & Models ---
-  const [ollamaUrl, setOllamaUrl] = useState('https://semivoluntary-arie-unripening.ngrok-free.dev/ollama')
+  const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
   // Search Focus States
   const [isGeminiSeeking, setIsGeminiSeeking] = useState(false)
   const [isOrSeeking, setIsOrSeeking] = useState(false)
@@ -867,6 +867,12 @@ function App() {
               setGatewayUrl(settings.savedGatewayUrl)
               dbSet('antigravity_gateway_url', settings.savedGatewayUrl)
             }
+            // Load synced Ollama URL if available
+            if (settings.savedOllamaUrl) {
+              console.log('📥 Restoring saved Ollama URL:', settings.savedOllamaUrl)
+              setOllamaUrl(settings.savedOllamaUrl)
+              dbSet('antigravity_ollama_url', settings.savedOllamaUrl)
+            }
           }
         } catch (e) {
           console.warn('Could not fetch synced settings:', e)
@@ -891,16 +897,16 @@ function App() {
             'Content-Type': 'application/json',
             'ngrok-skip-browser-warning': 'true'
           },
-          body: JSON.stringify({ cliModel, cliModelFavorites, savedGatewayUrl: gatewayUrl })
+          body: JSON.stringify({ cliModel, cliModelFavorites, savedGatewayUrl: gatewayUrl, savedOllamaUrl: ollamaUrl })
         })
-        console.log('📤 Synced settings to server (including gateway URL)')
+        console.log('📤 Synced settings to server (including gateway & ollama URL)')
       } catch (e) {
         console.warn('Failed to sync settings:', e)
       }
     }
     const timeoutId = setTimeout(syncToServer, 500) // Debounce 500ms
     return () => clearTimeout(timeoutId)
-  }, [cliModel, cliModelFavorites, gatewayUrl, isLocalServerAvailable])
+  }, [cliModel, cliModelFavorites, gatewayUrl, ollamaUrl, isLocalServerAvailable])
 
   // --- HELPER: Call Gemini API (Hybrid) ---
   const callGeminiAPI = async (userMessage, systemPrompt = '', context = '', conversationHistory = []) => {
