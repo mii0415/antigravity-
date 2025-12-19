@@ -546,6 +546,117 @@ if (fs.existsSync(certPath)) {
 // --- SCHEDULED NOTIFICATIONS (時報) ---
 // Runs at 7:00, 12:00, 18:00, 22:00 JST (server timezone)
 
+const generateScheduledMessage = async (timeLabel) => {
+    // Load active profile for character context
+    let profile = null;
+    let model = 'gemini-2.5-flash'; // Default model for notifications
+
+    try {
+        if (fs.existsSync(profilesFilePath)) {
+            const profileData = JSON.parse(fs.readFileSync(profilesFilePath, 'utf8'));
+            if (profileData.profiles && profileData.profiles.length > 0) {
+                const activeId = profileData.activeProfileId;
+                profile = profileData.profiles.find(p => p.id === activeId) || profileData.profiles[0];
+            }
+        }
+        // Load model from settings
+        if (fs.existsSync(settingsFilePath)) {
+            const settings = JSON.parse(fs.readFileSync(settingsFilePath, 'utf8'));
+            if (settings.cliModel) model = settings.cliModel;
+        }
+    } catch (e) {
+        console.warn('[Cron] Failed to load profile/settings:', e.message);
+    }
+
+    // Time context
+    const timeContextMap = {
+        '07:00': '朝7時（起床時間）',
+        '12:00': '昼12時（お昼時）',
+        '18:00': '夕方18時（夕暮れ時）',
+        '22:00': '夜22時（就寝前）'
+    };
+    const timeContext = timeContextMap[timeLabel] || timeLabel;
+
+    // Current date for seasonal context
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const dateStr = `${month}月${day}日`;
+
+    // Season context
+    let season = '';
+    if (month >= 3 && month <= 5) season = '春';
+    else if (month >= 6 && month <= 8) season = '夏';
+    else if (month >= 9 && month <= 11) season = '秋';
+    else season = '冬';
+
+    // Build prompt
+    const characterName = profile?.name || 'へし切長谷部';
+    const characterSheet = profile?.characterSheet;
+    let characterContext = '';
+    if (characterSheet) {
+        if (characterSheet.personality) characterContext += `性格: ${characterSheet.personality}\n`;
+        if (characterSheet.relationship) characterContext += `関係性: ${characterSheet.relationship}\n`;
+    }
+
+    const prompt = `【時報メッセージ生成】
+あなたは${characterName}です。
+現在時刻: ${timeContext}
+日付: ${dateStr}（${season}）
+
+${characterContext}
+
+主（女性ユーザー）に向けて、この時間に合った短い挨拶メッセージを1-2文で生成してください。
+キャラクターらしい口調で、季節感や時間帯を意識した内容にしてください。
+絵文字やタグは使わず、純粋なセリフのみ出力してください。`;
+
+    console.log(`[Cron] Generating AI message for ${timeLabel} using ${model}...`);
+
+    // Try CLI first, then API
+    if (process.env.GEMINI_CLI_COMMAND) {
+        try {
+            const cliCmd = process.env.GEMINI_CLI_COMMAND;
+            const safePrompt = prompt.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+            const { stdout } = await new Promise((resolve, reject) => {
+                const fullCmd = `${cliCmd} --model ${model} "${safePrompt}"`;
+                require('child_process').exec(fullCmd, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+                    if (err) reject(err);
+                    else resolve({ stdout });
+                });
+            });
+            const cleanText = stdout.trim();
+            console.log(`[Cron] AI generated: ${cleanText.substring(0, 50)}...`);
+            return cleanText;
+        } catch (e) {
+            console.warn('[Cron] CLI failed, trying API:', e.message);
+        }
+    }
+
+    // Fallback to API
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey) {
+        try {
+            const genAI = new GoogleGenerativeAI(apiKey);
+            const genModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+            const result = await genModel.generateContent(prompt);
+            const text = result.response.text().trim();
+            console.log(`[Cron] API generated: ${text.substring(0, 50)}...`);
+            return text;
+        } catch (e) {
+            console.warn('[Cron] API failed:', e.message);
+        }
+    }
+
+    // Ultimate fallback
+    const fallbackMessages = {
+        '07:00': '主、おはようございます。今日も俺がお側におりますよ。',
+        '12:00': '主、昼食のお時間ですよ。しっかり食べてくださいね。',
+        '18:00': '主、夕方ですね。今日も一日お疲れ様でした。',
+        '22:00': '主、そろそろお休みの時間ですよ。ゆっくり休んでくださいね。'
+    };
+    return fallbackMessages[timeLabel] || '主、お時間ですよ。';
+};
+
 const sendScheduledNotification = async (timeLabel) => {
     if (!admin.apps.length) {
         console.log('[Cron] Firebase not initialized, skipping notification');
@@ -568,23 +679,25 @@ const sendScheduledNotification = async (timeLabel) => {
         return;
     }
 
-    // Time-based messages
-    const messages = {
-        '07:00': { title: '☀️ おはようございます', body: '主、そろそろ起きる時間ですよ。俺が朝のご挨拶に参りました。' },
-        '12:00': { title: '🍱 お昼の時間です', body: '主、昼食はお済みですか？しっかり食べてくださいね。' },
-        '18:00': { title: '🌆 夕方のお知らせ', body: '主、今日も一日お疲れ様でした。少し休憩しませんか？' },
-        '22:00': { title: '🌙 おやすみの時間です', body: '主、そろそろお休みの時間ですよ。ゆっくり休んでくださいね。' }
-    };
+    // Generate AI message
+    const aiMessage = await generateScheduledMessage(timeLabel);
 
-    const msg = messages[timeLabel] || { title: '⏰ 時報', body: `${timeLabel} になりました。` };
+    // Time-based titles
+    const titles = {
+        '07:00': '☀️ おはようございます',
+        '12:00': '🍱 お昼の時間です',
+        '18:00': '🌆 夕方のお知らせ',
+        '22:00': '🌙 おやすみの時間です'
+    };
+    const title = titles[timeLabel] || '⏰ 時報';
 
     console.log(`[Cron] Sending scheduled notification for ${timeLabel} to ${tokens.length} devices`);
 
     const payload = {
         tokens: tokens,
         notification: {
-            title: msg.title,
-            body: msg.body
+            title: title,
+            body: aiMessage
         },
         data: {
             type: 'scheduled_notification',
