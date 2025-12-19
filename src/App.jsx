@@ -2496,6 +2496,15 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       enhanced += `\n\n【世界観設定】\n${profile.worldSetting}`
     }
 
+    // Add memory instruction (auto-save feature)
+    enhanced += `\n\n【記憶機能】
+ユーザーが「覚えていてね」「記憶して」「忘れないで」「覚えておいて」などと言った場合、
+覚えてほしい内容を [MEMORY: 内容] の形式で応答の最後に追加すること。
+例: ユーザー「私の好きな食べ物はカレーだよ、覚えていてね」
+応答: 「カレーがお好きなんですね、覚えておきますよ。[MEMORY: 主の好きな食べ物はカレー]」
+複数の情報があれば複数の[MEMORY:]タグを追加可能。
+【重要】[MEMORY:]タグはシステムが認識するので、必ずこの形式を使うこと。`
+
     return enhanced
   }
 
@@ -2715,6 +2724,8 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       const lowerContent = content.toLowerCase()
       // Skip BG tags
       if (lowerContent.startsWith('bg:')) continue
+      // Skip MEMORY tags
+      if (lowerContent.startsWith('memory:')) continue
 
       // Check mapping
       const mapped = emotionToExpression[content] || emotionToExpression[lowerContent]
@@ -2723,6 +2734,35 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     return 'neutral'
   }
 
+  // Extract [MEMORY:] tags from AI response and save to profile context
+  const extractAndSaveMemory = (aiText) => {
+    // Match [MEMORY:xxx] or 【MEMORY:xxx】 tags
+    const memoryRegex = /[\[【]MEMORY[：:]\s*([^\]】]+)[\]】]/gi
+    const memories = []
+    let match
+    while ((match = memoryRegex.exec(aiText)) !== null) {
+      memories.push(match[1].trim())
+    }
+
+    if (memories.length > 0 && activeProfile) {
+      // Format: YYYY/MM/DD: memory content
+      const dateStr = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/-/g, '/')
+      const newMemories = memories.map(m => `${dateStr}: ${m}`).join('\n')
+
+      // Append to existing memory
+      const currentMemory = activeProfile.memory || ''
+      const updatedMemory = currentMemory ? `${currentMemory}\n${newMemories}` : newMemories
+
+      // Update profile
+      const updatedProfile = { ...activeProfile, memory: updatedMemory }
+      setProfiles(prev => prev.map(p => p.id === activeProfile.id ? updatedProfile : p))
+
+      console.log('🧠 Memory saved:', newMemories)
+    }
+
+    // Remove [MEMORY:] tags from displayed text
+    return aiText.replace(/[\[【]MEMORY[：:]\s*[^\]】]+[\]】]/gi, '').trim()
+  }
 
 
   // Sync Live2D expression with currentExpression
@@ -4337,6 +4377,9 @@ Acknowledge the touch naturally in your response and continue the conversation. 
       // Apply Pronoun Replacement to ALL AI responses (Consistency)
       aiText = applyPronounReplacement(aiText)
 
+      // Extract and save [MEMORY:] tags to profile context, remove from displayed text
+      aiText = extractAndSaveMemory(aiText)
+
       detectAndSetEmotion(aiText)
 
       // Extract emotion tag for message storage (for restore on delete)
@@ -4443,6 +4486,9 @@ Acknowledge the touch naturally in your response and continue the conversation. 
 
       // Apply Pronoun Replacement to ALL AI responses (Consistency)
       newVariant = applyPronounReplacement(newVariant)
+
+      // Extract and save [MEMORY:] tags to profile context
+      newVariant = extractAndSaveMemory(newVariant)
 
       detectAndSetEmotion(newVariant)
 
