@@ -342,6 +342,42 @@ app.post('/api/profiles', (req, res) => {
     }
 });
 
+// --- 2.6. MESSAGES SYNC API (Server-side chat history storage) ---
+const messagesFilePath = path.join(__dirname, 'messages.json');
+
+// Load messages from file on startup
+let syncedMessages = { messages: [], sessions: [], savedAt: null };
+try {
+    if (fs.existsSync(messagesFilePath)) {
+        syncedMessages = JSON.parse(fs.readFileSync(messagesFilePath, 'utf8'));
+        console.log('[Messages] Loaded from file:', messagesFilePath);
+    }
+} catch (e) {
+    console.warn('[Messages] Failed to load messages.json:', e.message);
+}
+
+app.get('/api/messages', (req, res) => {
+    console.log('[Messages] GET - Returning synced messages');
+    res.json(syncedMessages);
+});
+
+app.post('/api/messages', (req, res) => {
+    const { messages, sessions, activeSessionId } = req.body;
+    if (!messages || !Array.isArray(messages)) {
+        return res.status(400).json({ success: false, error: 'Invalid messages data' });
+    }
+    syncedMessages = { messages, sessions: sessions || [], activeSessionId, savedAt: new Date().toISOString() };
+    // Save to file
+    try {
+        fs.writeFileSync(messagesFilePath, JSON.stringify(syncedMessages, null, 2), 'utf8');
+        console.log('[Messages] POST - Saved messages to file:', messages.length, 'messages');
+        res.json({ success: true, savedCount: messages.length });
+    } catch (e) {
+        console.error('[Messages] Failed to save:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // --- 3. FCM TOKEN STORAGE ---
 const fcmTokensFilePath = path.join(__dirname, 'fcm-tokens.json');
 

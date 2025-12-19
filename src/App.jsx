@@ -874,6 +874,20 @@ function App() {
               dbSet('antigravity_ollama_url', settings.savedOllamaUrl)
             }
           }
+
+          // Load messages from server
+          const messagesRes = await fetch(`${gatewayUrl}/api/messages`, {
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+          })
+          if (messagesRes.ok) {
+            const serverMessages = await messagesRes.json()
+            if (serverMessages.messages && serverMessages.messages.length > 0) {
+              console.log('📥 Loaded messages from server:', serverMessages.messages.length, 'messages')
+              setMessages(serverMessages.messages)
+              if (serverMessages.sessions) setSessions(serverMessages.sessions)
+              if (serverMessages.activeSessionId) setActiveSessionId(serverMessages.activeSessionId)
+            }
+          }
         } catch (e) {
           console.warn('Could not fetch synced settings:', e)
         }
@@ -1279,17 +1293,39 @@ function App() {
   // handleCreateSessionRef removed, using dependency array instead
 
 
-  // --- EFFECT: Saves ---
+  // --- EFFECT: Save messages to server ---
   useEffect(() => {
-    try {
-      localStorage.setItem('antigravity_messages', JSON.stringify(messages))
-    } catch (e) {
-      console.error('Message Save Failed:', e)
-      if (e.name === 'QuotaExceededError') {
-        console.warn('LocalStorage full. History not saved.')
+    // Skip initial load and empty states
+    if (!isLocalServerAvailable || !gatewayUrl || messages.length === 0) return
+
+    const syncToServer = async () => {
+      try {
+        await fetch(`${gatewayUrl}/api/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'ngrok-skip-browser-warning': 'true'
+          },
+          body: JSON.stringify({ messages, sessions, activeSessionId })
+        })
+        console.log('📤 Synced messages to server:', messages.length, 'messages')
+      } catch (e) {
+        console.warn('Failed to sync messages to server:', e)
+        // Fallback to LocalStorage
+        try {
+          localStorage.setItem('antigravity_messages', JSON.stringify(messages))
+        } catch (storageError) {
+          if (storageError.name === 'QuotaExceededError') {
+            console.warn('LocalStorage full. History not saved.')
+          }
+        }
       }
     }
-  }, [messages])
+
+    // Debounce to avoid too many saves
+    const timeoutId = setTimeout(syncToServer, 1000)
+    return () => clearTimeout(timeoutId)
+  }, [messages, sessions, activeSessionId, isLocalServerAvailable, gatewayUrl])
 
   // --- ACTIONS: Session Management ---
 
@@ -2736,11 +2772,15 @@ The message must be consistent with your character persona and tone. (Max 1 shor
 
   // Extract [MEMORY:] tags from AI response and save to profile context
   const extractAndSaveMemory = (aiText) => {
+    // Debug: Log incoming text to check for MEMORY tags
+    console.log('🔍 extractAndSaveMemory called with:', aiText?.substring(0, 500))
+
     // Match [MEMORY:xxx] or 【MEMORY:xxx】 tags
     const memoryRegex = /[\[【]MEMORY[：:]\s*([^\]】]+)[\]】]/gi
     const memories = []
     let match
     while ((match = memoryRegex.exec(aiText)) !== null) {
+      console.log('🔍 Found MEMORY tag:', match[0])
       memories.push(match[1].trim())
     }
 
