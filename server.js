@@ -119,7 +119,7 @@ app.all(/^\/tts(\/.*)?$/, async (req, res) => {
 // --- 1. PROXY ENDPOINT (For Gemini 3.0 / CLI) ---
 app.post('/api/gemini-proxy', async (req, res) => {
     try {
-        const { message, history, model, systemPrompt, characterName, userProfile } = req.body;
+        const { message, history, model, systemPrompt, characterName, userProfile, context, worldSetting, characterSheet } = req.body;
         console.log(`[Proxy] Request received.`);
 
         // A. CLI Execution Mode (Priority)
@@ -151,20 +151,46 @@ app.post('/api/gemini-proxy', async (req, res) => {
                 const characterSection = characterName ? `【キャラクター名】${characterName}\\n\\n` : '';
                 const userProfileSection = userProfile ? `【ユーザー設定】\\n${userProfile}\\n\\n` : '';
 
+                // Include world setting
+                const worldSettingSection = worldSetting ? `【世界観設定】\\n${worldSetting}\\n\\n` : '';
+
+                // Include character sheet (combine all fields)
+                let characterSheetSection = '';
+                if (characterSheet) {
+                    const sheetFields = [];
+                    if (characterSheet.name) sheetFields.push(`名前: ${characterSheet.name}`);
+                    if (characterSheet.personality) sheetFields.push(`性格: ${characterSheet.personality}`);
+                    if (characterSheet.appearance) sheetFields.push(`外見: ${characterSheet.appearance}`);
+                    if (characterSheet.relationship) sheetFields.push(`関係性: ${characterSheet.relationship}`);
+                    if (characterSheet.preferences) sheetFields.push(`好み: ${characterSheet.preferences}`);
+                    if (characterSheet.fetishes) sheetFields.push(`性癖: ${characterSheet.fetishes}`);
+                    if (characterSheet.abilities) sheetFields.push(`特殊能力: ${characterSheet.abilities}`);
+                    if (characterSheet.other) sheetFields.push(`その他: ${characterSheet.other}`);
+                    if (sheetFields.length > 0) {
+                        characterSheetSection = `【キャラクターシート】\\n${sheetFields.join('\\n')}\\n\\n`;
+                    }
+                }
+
+                // Include context (long-term memory)
+                const contextSection = context ? `【長期記憶・コンテキスト】\\n${context}\\n\\n` : '';
+
                 // Include system prompt from frontend settings
                 const systemPromptSection = systemPrompt ? `【キャラクター設定】\\n${systemPrompt}\\n\\n` : '';
 
                 let fullMessage = '';
                 if (req.body.isRawMode) {
                     // Raw Mode: Bypass all standard formatting and wrappers
-                    // Just combine System Prompt + History + Current Message
+                    // Just combine System Prompt + Context + Character Sheet + History + Current Message
                     // This is useful for "Jailbreak" style prompts that need to be the absolute first/primary instruction
                     fullMessage = (systemPrompt ? systemPrompt + '\\n\\n' : '') +
+                        (contextSection || '') +
+                        (characterSheetSection || '') +
+                        (worldSettingSection || '') +
                         (historyContext || '') +
                         message;
                 } else {
                     // Standard Mode: Use descriptive Japanese wrappers
-                    fullMessage = chatInstruction + characterSection + userProfileSection + systemPromptSection + historyContext + '【現在のメッセージ】\\n' + message;
+                    fullMessage = chatInstruction + characterSection + userProfileSection + worldSettingSection + characterSheetSection + contextSection + systemPromptSection + historyContext + '【現在のメッセージ】\\n' + message;
                 }
 
                 // Simple strict sanitization to avoid major injection (basic quotes)

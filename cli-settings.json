@@ -4,5 +4,7 @@
     "gemini-2.5-pro",
     "gemini-3-pro-preview",
     "gemini-3-flash-preview"
-  ]
+  ],
+  "savedGatewayUrl": "http://100.126.88.16:8080",
+  "savedOllamaUrl": "http://100.126.88.16:11434"
 }

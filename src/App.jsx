@@ -924,7 +924,8 @@ function App() {
           },
           body: JSON.stringify({
             message: userMessage,
-            systemPrompt: systemPrompt + (context ? `\n\nContext: ${context}` : ''),
+            systemPrompt: systemPrompt,
+            context: context || '',
             history: conversationHistory
               .filter(m => !m.deleted && m.text) // Exclude deleted messages
               .slice(-30) // Last 30 messages
@@ -932,6 +933,8 @@ function App() {
             model: cliModel, // Use CLI model for gateway calls
             characterName: activeProfile?.name || 'AI',
             userProfile: activeProfile?.userProfile || '',
+            worldSetting: activeProfile?.worldSetting || '',
+            characterSheet: activeProfile?.characterSheet || null,
             isRawMode: activeProfile?.id === 'yandere-hasebe' // Enable Raw Mode for Yandere profile to bypass wrappers
           })
         })
