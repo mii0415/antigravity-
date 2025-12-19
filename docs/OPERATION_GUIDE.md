@@ -1,6 +1,6 @@
-# Antigravity 運用ガイド（完全版）
+# Antigravity 運用ガイド
 
-## 🚀 起動手順（毎回やること）
+## 🚀 起動手順
 
 ### ターミナル1：サーバー起動
 ```powershell
@@ -31,43 +31,31 @@ http://100.126.88.16:8080
 
 ## ✅ 動作する機能
 
-| 機能 | 状態 | 備考 |
-|------|------|------|
-| チャット | ✅ | Gemini API / CLI |
-| TTS（読み上げ） | ✅ | サーバー経由 |
-| Ollama | ✅ | 外部接続設定済み |
-| 通知（フォアグラウンド） | ✅ | Service Worker |
-| 通知（バックグラウンド） | ✅ | Firebase経由 |
-| Live2D | ✅ | キャラクター表示 |
-
----
-
-## 📋 不要なコマンド
-
-| コマンド | 理由 |
-|----------|------|
-| `npm run dev` | 開発中のみ使用 |
-| `cloudflared tunnel login` | Tailscale使用のため不要 |
-| `cloudflared tunnel` | Tailscale使用のため不要 |
+| 機能 | 状態 |
+|------|------|
+| チャット | ✅ |
+| TTS（読み上げ） | ✅ |
+| Ollama | ✅ |
+| Push通知（フォアグラウンド） | ✅ |
+| Push通知（バックグラウンド） | ✅ |
+| Live2D | ✅ |
 
 ---
 
 ## 🔧 トラブルシューティング
 
 ### Ollamaに接続できない
-1. `ollama serve` が起動しているか確認
-2. 環境変数 `OLLAMA_HOST=0.0.0.0` が設定されているか確認
-3. 起動コマンド: `$env:OLLAMA_HOST = "0.0.0.0"; ollama serve`
+```powershell
+$env:OLLAMA_HOST = "0.0.0.0"; ollama serve
+```
 
 ### ゲートウェイがオフライン
 1. `node server.js` が起動しているか確認
 2. Tailscale VPNがスマホで有効か確認
-3. ゲートウェイURL: `http://100.126.88.16:8080`
 
 ### 通知が来ない
 1. GitHub Pages版を使用しているか確認
 2. ブラウザの通知許可を確認
-3. 設定画面でスケジュール通知が有効か確認
 
 ---
 
@@ -76,9 +64,7 @@ http://100.126.88.16:8080
 | ファイル | 役割 |
 |----------|------|
 | `server.js` | メインサーバー |
-| `cli-settings.json` | 設定保存（モデル、ゲートウェイURL） |
-| `profiles.json` | キャラクタープロファイル |
-| `firebase-admin-key.json` | FCM通知用（Git非管理） |
+| `docs/CLOUDFLARE_BACKUP.md` | Cloudflare設定（参考用） |
 
 ---
 
@@ -88,18 +74,7 @@ http://100.126.88.16:8080
 |------|-----|
 | **メインアプリ** | https://mii0415.github.io/antigravity-/ |
 | **ゲートウェイ** | http://100.126.88.16:8080 |
-| **Ollama（直接）** | http://100.126.88.16:11434 |
-| **ローカルテスト** | http://localhost:8080/antigravity-/ |
-
----
-
-## 💡 ヒント
-
-### 両方同時起動（1コマンド）
-```powershell
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd c:\Users\onigi\.gemini\antigravity\playground\phantom-sunspot; node server.js"
-Start-Process powershell -ArgumentList "-NoExit", "-Command", '$env:OLLAMA_HOST = \"0.0.0.0\"; ollama serve'
-```
+| **Ollama** | http://100.126.88.16:11434 |
 
 ---
 
