@@ -3,7 +3,6 @@ import { dbGet, dbSet, dbDel, dbKeys } from './db'
 import { Bell, Send, Folder, FolderOpen, Paperclip, FileText, User, Bot, X, ChevronDown, ChevronLeft, ChevronRight, Brain, Trash2, Image, Files, Book, Plus, Settings, Upload, Crop, Check, ZoomIn, Move, Edit2, Save, RotateCw, RefreshCw, Key, Loader, Star, DownloadCloud, Menu, MessageSquare, Volume2, StopCircle, Globe, Server, Mic, MicOff } from 'lucide-react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import Live2DCanvas from './Live2DCanvas'
-import { initializeMessaging, getFCMToken, onForegroundMessage } from './firebase-config'
 import './index.css'
 
 
@@ -574,7 +573,7 @@ function App() {
 
           if (activeProfile?.id === 'yandere-hasebe') {
             const fresh = updatedProfiles.find(x => x.id === 'yandere-hasebe')
-            if (fresh) setActiveProfileId(fresh.id)
+            if (fresh) setActiveProfile(fresh)
           }
 
 
@@ -1051,84 +1050,6 @@ function App() {
     }
   }
 
-  // --- FCM (Firebase Cloud Messaging) Registration ---
-  // This provides more reliable notifications on Android/Xiaomi devices
-  const registerFCM = async () => {
-    try {
-      // Request notification permission if not granted
-      const permission = await Notification.requestPermission()
-      if (permission !== 'granted') {
-        console.log('[FCM] Notification permission not granted')
-        return false
-      }
-
-      // Register Firebase messaging service worker
-      const swUrl = `${window.location.origin}${import.meta.env.BASE_URL}firebase-messaging-sw.js`
-      console.log('[FCM] Registering service worker:', swUrl)
-
-      await navigator.serviceWorker.register(swUrl, { scope: import.meta.env.BASE_URL })
-      await navigator.serviceWorker.ready
-
-      // Initialize Firebase Messaging
-      await initializeMessaging()
-
-      // Get FCM token
-      const token = await getFCMToken()
-      if (!token) {
-        console.warn('[FCM] Failed to get token')
-        return false
-      }
-
-      // Register token with our server
-      const gatewayUrl = getGatewayUrl()
-      const response = await fetch(`${gatewayUrl}/api/fcm/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true'
-        },
-        body: JSON.stringify({
-          token,
-          deviceInfo: navigator.userAgent
-        })
-      })
-
-      if (response.ok) {
-        console.log('[FCM] Token registered with server')
-
-        // Set up foreground message handler
-        onForegroundMessage((payload) => {
-          console.log('[FCM] Foreground message:', payload)
-          // Show notification manually for foreground messages
-          if (Notification.permission === 'granted') {
-            new Notification(payload.notification?.title || 'Antigravity', {
-              body: payload.notification?.body || '',
-              icon: 'https://mii0415.github.io/antigravity-/notification-icon.jpg'
-            })
-          }
-        })
-
-        return true
-      } else {
-        console.error('[FCM] Failed to register token with server')
-        return false
-      }
-    } catch (error) {
-      console.error('[FCM] Registration error:', error)
-      return false
-    }
-  }
-
-  // Auto-register FCM on app load (if notifications are enabled)
-  useEffect(() => {
-    const initFCM = async () => {
-      if (Notification.permission === 'granted') {
-        await registerFCM()
-      }
-    }
-    initFCM()
-  }, [])
-
   // Save Scheduled Notification setting
   useEffect(() => {
     if (scheduledNotificationsEnabled !== undefined) {
@@ -1203,9 +1124,6 @@ function App() {
   const [isMemorySectionOpen, setIsMemorySectionOpen] = useState(true) // メモリセクション - default open
   const [isSystemPromptSectionOpen, setIsSystemPromptSectionOpen] = useState(true) // システムプロンプト - default open
   const [isOllamaTranslationOpen, setIsOllamaTranslationOpen] = useState(false) // 翻訳設定 (Ollama用)
-
-  // --- STATE: Fullscreen Text Editor ---
-  const [fullscreenEditor, setFullscreenEditor] = useState({ open: false, title: '', value: '', onSave: null })
 
   useEffect(() => {
     localStorage.setItem('antigravity_ui_mode', uiMode)
@@ -1368,7 +1286,7 @@ function App() {
         // handleSwitchProfile equivalent logic (since handleSwitchProfile might toggle UI)
         // Direct state update is safer here to avoid side effects
         const targetProfile = profiles.find(p => p.id === snap.profileId)
-        if (targetProfile) setActiveProfileId(targetProfile.id)
+        if (targetProfile) setActiveProfile(targetProfile)
       }
       if (snap.model) setSelectedModel(snap.model)
       // Note: backgroundImage restoration removed - setBackgroundImage is not defined
@@ -3649,7 +3567,7 @@ The message must be consistent with your character persona and tone. (Max 1 shor
       } else {
         console.error('❌ executeBufferedAIRequestRef is null!')
       }
-    }, 800)
+    }, 1500)
   }
 
   // --- LOGIC: AI Touch Reaction ---
@@ -3660,18 +3578,14 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     const levelDesc = level === 'erotic' ? 'erotically' : (level === 'sweet' ? 'affectionately' : 'casually')
     const zoneName = zone.charAt(0).toUpperCase() + zone.slice(1)
 
-    // 直前のAIセリフを取得してコンテキストに含める
-    const lastAIMessage = messages.slice().reverse().find(m => m.sender === 'ai')
-    const lastDialogue = lastAIMessage ? `(You just said: "${lastAIMessage.text?.substring(0, 100)}") ` : ''
-
     // ユーザーのアクションを表現するテキスト
     const hasEmotions = activeProfile.emotions && Object.keys(activeProfile.emotions).length > 0
     const tagInstruction = hasEmotions
       ? `Start with an emotion tag like [Love], [Joy], [Embarrassment] (match your reaction).`
       : `Start with an emotion tag like [Joy].`
 
-    const promptText = `${lastDialogue}*User touches your ${zoneName} (${actionDesc}, ${levelDesc})*
-Acknowledge the touch naturally in your response and continue the conversation. ${tagInstruction}`
+    const promptText = `*User touches your ${zoneName} (${actionDesc}, ${levelDesc})*
+Response must be short (under 30 chars). ${tagInstruction}`
 
     // キューに追加 (API呼び出しはexecuteBufferedAIRequestが行う)
     queueAIRequest('action', promptText)
@@ -5717,7 +5631,7 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                                   setProfiles(data.profiles);
                                   if (data.activeProfileId) {
                                     const targetProfile = data.profiles.find(p => p.id === data.activeProfileId);
-                                    if (targetProfile) setActiveProfileId(targetProfile.id);
+                                    if (targetProfile) setActiveProfile(targetProfile);
                                   }
                                   await dbSet('antigravity_profiles', data.profiles);
                                   alert(`✅ ダウンロード完了！\n${data.profiles.length}個のプロファイルを読み込みました。`);
@@ -6841,34 +6755,14 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                   </div>
 
                   {isSystemPromptSectionOpen && (
-                    <div style={{ marginTop: '8px' }}>
-                      <textarea
-                        className="system-prompt-input"
-                        value={activeProfile.systemPrompt}
-                        onChange={(e) => handleUpdateActiveProfile('systemPrompt', e.target.value)}
-                        placeholder="例: あなたは猫です。語尾にニャをつけてください。"
-                        rows={3}
-                      />
-                      <button
-                        onClick={() => setFullscreenEditor({
-                          open: true,
-                          title: '📝 システムプロンプト編集',
-                          value: activeProfile.systemPrompt || '',
-                          onSave: (val) => handleUpdateActiveProfile('systemPrompt', val)
-                        })}
-                        style={{
-                          marginTop: '8px',
-                          padding: '6px 12px',
-                          backgroundColor: '#e3f2fd',
-                          border: '1px solid #90caf9',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          fontSize: '0.8rem'
-                        }}
-                      >
-                        🖥️ 全画面で編集
-                      </button>
-                    </div>
+                    <textarea
+                      className="system-prompt-input"
+                      value={activeProfile.systemPrompt}
+                      onChange={(e) => handleUpdateActiveProfile('systemPrompt', e.target.value)}
+                      placeholder="例: あなたは猫です。語尾にニャをつけてください。"
+                      rows={3}
+                      style={{ marginTop: '8px' }}
+                    />
                   )}
                 </div>
 
@@ -6910,17 +6804,6 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                           placeholder="例: 真面目で献身的、独占欲が強い"
                           rows={2}
                         />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '🧠 性格 編集',
-                            value: activeProfile.characterSheet?.personality || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, personality: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#f3e5f5', border: '1px solid #ce93d8', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
                       </div>
                       {/* Appearance */}
                       <div>
@@ -6932,17 +6815,6 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                           placeholder="例: 黒髪、切れ長の目、端正な顔立ち"
                           rows={2}
                         />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '👤 外見 編集',
-                            value: activeProfile.characterSheet?.appearance || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, appearance: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#e0f7fa', border: '1px solid #80deea', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
                       </div>
                       {/* Relationship */}
                       <div>
@@ -6954,17 +6826,6 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                           placeholder="例: 主の恋人兼従者として仕えている"
                           rows={2}
                         />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '💑 関係性 編集',
-                            value: activeProfile.characterSheet?.relationship || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, relationship: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#fce4ec', border: '1px solid #f48fb1', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
                       </div>
                       {/* Preferences */}
                       <div>
@@ -6976,17 +6837,6 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                           placeholder="例: 主を甘やかすこと、褒められること、整理整頓"
                           rows={2}
                         />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '💝 好きなこと 編集',
-                            value: activeProfile.characterSheet?.preferences || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, preferences: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
                       </div>
                       {/* Fetishes */}
                       <div>
@@ -6998,17 +6848,6 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                           placeholder="例: 支配欲、焦らし、言葉責め"
                           rows={2}
                         />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '❤️ 性癖・嗜好 編集',
-                            value: activeProfile.characterSheet?.fetishes || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, fetishes: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#ffebee', border: '1px solid #ef9a9a', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
                       </div>
                       {/* Special Abilities */}
                       <div>
@@ -7020,17 +6859,6 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                           placeholder="例: 刀剣男士としての戦闘能力、主への異常な執着"
                           rows={2}
                         />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '⚡ 特殊能力・スキル 編集',
-                            value: activeProfile.characterSheet?.abilities || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, abilities: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#e8eaf6', border: '1px solid #9fa8da', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
                       </div>
                       {/* Other */}
                       <div>
@@ -7042,17 +6870,6 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                           placeholder="その他の設定やメモ"
                           rows={2}
                         />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '📋 その他 編集',
-                            value: activeProfile.characterSheet?.other || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, other: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
                       </div>
 
                       <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
@@ -7479,89 +7296,6 @@ Acknowledge the touch naturally in your response and continue the conversation. 
           </div>
         )
       }
-
-      {/* FULLSCREEN EDITOR MODAL */}
-      {fullscreenEditor.open && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 10001,
-          backgroundColor: 'rgba(0,0,0,0.9)',
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '20px'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h2 style={{ color: 'white', margin: 0, fontSize: '1.2rem' }}>{fullscreenEditor.title}</h2>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <label style={{
-                padding: '8px 16px',
-                backgroundColor: '#4caf50',
-                color: 'white',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '0.9rem'
-              }}>
-                📁 TXTインポート
-                <input
-                  type="file"
-                  accept=".txt,.md"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0]
-                    if (file) {
-                      const reader = new FileReader()
-                      reader.onload = (ev) => {
-                        setFullscreenEditor(prev => ({ ...prev, value: ev.target.result }))
-                      }
-                      reader.readAsText(file)
-                    }
-                    e.target.value = ''
-                  }}
-                />
-              </label>
-              <button
-                onClick={() => setFullscreenEditor({ open: false, title: '', value: '', onSave: null })}
-                style={{ padding: '8px 16px', backgroundColor: '#666', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={() => {
-                  if (fullscreenEditor.onSave) {
-                    fullscreenEditor.onSave(fullscreenEditor.value)
-                  }
-                  setFullscreenEditor({ open: false, title: '', value: '', onSave: null })
-                }}
-                style={{ padding: '8px 16px', backgroundColor: '#2196f3', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
-              >
-                保存
-              </button>
-            </div>
-          </div>
-          <textarea
-            value={fullscreenEditor.value}
-            onChange={(e) => setFullscreenEditor(prev => ({ ...prev, value: e.target.value }))}
-            style={{
-              flex: 1,
-              width: '100%',
-              padding: '16px',
-              fontSize: '1rem',
-              fontFamily: 'monospace',
-              backgroundColor: '#1e1e1e',
-              color: '#d4d4d4',
-              border: '1px solid #444',
-              borderRadius: '8px',
-              resize: 'none',
-              outline: 'none'
-            }}
-            placeholder="ここにテキストを入力..."
-          />
-          <div style={{ color: '#888', fontSize: '0.8rem', marginTop: '8px' }}>
-            文字数: {fullscreenEditor.value?.length || 0} | Ctrl+Enter で保存
-          </div>
-        </div>
-      )}
     </div >
   )
 

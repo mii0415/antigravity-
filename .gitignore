@@ -25,3 +25,6 @@ dist-ssr
 
 # Security
 .env
+
+# Firebase Admin SDK key
+hasebe-4b46a-firebase-adminsdk-fbsvc-b9e76d54ba.json

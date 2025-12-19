@@ -22,6 +22,7 @@ const Live2DCanvas = forwardRef(({
     const modelRef = useRef(null)
     const longPressTimerRef = useRef(null) // For long press detection
     const pressedAreasRef = useRef([]) // Store hit areas during press
+    const touchCoordsRef = useRef({ x: 0, y: 0 }) // Store touch coordinates
     const [debugInfo, setDebugInfo] = useState({ expression: 'none', status: 'initializing' })
 
     // Ref to hold the latest callback to avoid stale closures in useEffect
@@ -181,7 +182,14 @@ const Live2DCanvas = forwardRef(({
                 let isLongPressTriggered = false
 
                 model.on('pointerdown', (event) => {
-                    // 1. Calculate Hit Area based on position
+                    // 1. Store PAGE coordinates for heart effect (not canvas coordinates)
+                    // Pixi global is relative to canvas, we need page position
+                    const canvasRect = container.getBoundingClientRect()
+                    const pageX = canvasRect.left + event.data.global.x
+                    const pageY = canvasRect.top + event.data.global.y
+                    touchCoordsRef.current = { x: pageX, y: pageY }
+
+                    // 2. Calculate Hit Area based on position
                     const localY = event.data.getLocalPosition(model).y
                     const relativeY = localY / model.height
 
@@ -196,10 +204,11 @@ const Live2DCanvas = forwardRef(({
                     pressedAreasRef.current = hitAreas
                     isLongPressTriggered = false
 
-                    // 2. Start Long Press Timer
+                    // 3. Start Long Press Timer
                     longPressTimerRef.current = setTimeout(() => {
                         if (onLongPressRef.current && pressedAreasRef.current.length > 0) {
-                            onLongPressRef.current(pressedAreasRef.current)
+                            // Pass areas AND coordinates
+                            onLongPressRef.current(pressedAreasRef.current, touchCoordsRef.current)
                             isLongPressTriggered = true
                         }
                     }, LONG_PRESS_DURATION)
@@ -212,10 +221,11 @@ const Live2DCanvas = forwardRef(({
                         longPressTimerRef.current = null
                     }
 
-                    // If not long press diff, treat as Tap
+                    // If not long press, treat as Tap
                     if (!isLongPressTriggered) {
                         if (onHitAreaTapRef.current && pressedAreasRef.current.length > 0) {
-                            onHitAreaTapRef.current(pressedAreasRef.current)
+                            // Pass areas AND coordinates
+                            onHitAreaTapRef.current(pressedAreasRef.current, touchCoordsRef.current)
                         }
                     }
 

@@ -1,39 +1,18 @@
 
 import express from 'express';
 import cors from 'cors';
-import https from 'https';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { spawn } from 'child_process';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import admin from 'firebase-admin';
 
 dotenv.config();
 
 // ESM fix for __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// --- Firebase Admin SDK Initialization ---
-const firebaseKeyPath = path.join(__dirname, 'hasebe-4b46a-firebase-adminsdk-fbsvc-b9e76d54ba.json');
-let firebaseInitialized = false;
-
-if (fs.existsSync(firebaseKeyPath)) {
-    try {
-        const serviceAccount = JSON.parse(fs.readFileSync(firebaseKeyPath, 'utf8'));
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
-        });
-        firebaseInitialized = true;
-        console.log('[Firebase] Admin SDK initialized successfully');
-    } catch (e) {
-        console.warn('[Firebase] Failed to initialize Admin SDK:', e.message);
-    }
-} else {
-    console.log('[Firebase] Service account key not found. FCM push notifications disabled.');
-}
 
 const app = express();
 const PORT = 8080; // Local Gateway Port
@@ -175,11 +154,7 @@ app.post('/api/gemini-proxy', async (req, res) => {
                     // Use "exec" to run the full command string
                     // Note: For long conversation history or complex JSON, a temp file or stdin is better.
                     // This is a simple "Prompt-In, Text-Out" adapter.
-                    // Add --model flag to force selected model and prevent CLI auto-switching
-                    const fixedModel = model ?? 'gemini-2.5-pro';
-                    const modelFlag = ` --model ${fixedModel}`;
-                    const fullCmd = `${cliCmd}${modelFlag} "${safeMessage}"`;
-                    console.log(`[Proxy] 🎯 Executing: ${cliCmd}${modelFlag} "<prompt>"`); // Log model used
+                    const fullCmd = `${cliCmd} "${safeMessage}"`;
                     // Run CLI from user's .gemini directory so it picks up GEMINI.md
                     const cp = spawn(fullCmd, { shell: true, cwd: 'C:\\Users\\onigi\\.gemini' });
 
@@ -307,118 +282,7 @@ app.post('/api/profiles', (req, res) => {
     }
 });
 
-// --- 3. FCM TOKEN STORAGE ---
-const fcmTokensFilePath = path.join(__dirname, 'fcm-tokens.json');
-
-// Load FCM tokens from file
-let fcmTokens = [];
-try {
-    if (fs.existsSync(fcmTokensFilePath)) {
-        fcmTokens = JSON.parse(fs.readFileSync(fcmTokensFilePath, 'utf8'));
-        console.log('[FCM] Loaded tokens from file:', fcmTokens.length, 'tokens');
-    }
-} catch (e) {
-    console.warn('[FCM] Failed to load fcm-tokens.json:', e.message);
-}
-
-// Register FCM token
-app.post('/api/fcm/register', (req, res) => {
-    const { token, deviceInfo } = req.body;
-    if (!token) {
-        return res.status(400).json({ success: false, error: 'Token required' });
-    }
-
-    // Check if token already exists
-    const existingIndex = fcmTokens.findIndex(t => t.token === token);
-    const tokenData = {
-        token,
-        deviceInfo: deviceInfo || 'unknown',
-        registeredAt: new Date().toISOString(),
-        lastActive: new Date().toISOString()
-    };
-
-    if (existingIndex >= 0) {
-        fcmTokens[existingIndex] = tokenData;
-    } else {
-        fcmTokens.push(tokenData);
-    }
-
-    // Save to file
-    try {
-        fs.writeFileSync(fcmTokensFilePath, JSON.stringify(fcmTokens, null, 2), 'utf8');
-        console.log('[FCM] Token registered:', token.substring(0, 20) + '...');
-        res.json({ success: true });
-    } catch (e) {
-        console.error('[FCM] Failed to save token:', e.message);
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-// Get registered tokens
-app.get('/api/fcm/tokens', (req, res) => {
-    res.json({ success: true, count: fcmTokens.length, tokens: fcmTokens });
-});
-
-// Send FCM notification to all registered devices
-app.post('/api/fcm/send', async (req, res) => {
-    const { title, body, data } = req.body;
-
-    if (fcmTokens.length === 0) {
-        return res.status(400).json({ success: false, error: 'No registered tokens' });
-    }
-
-    if (!firebaseInitialized) {
-        return res.status(500).json({ success: false, error: 'Firebase Admin SDK not initialized' });
-    }
-
-    try {
-        // Build the message
-        const message = {
-            notification: {
-                title: title || 'Antigravity',
-                body: body || 'New notification'
-            },
-            data: data || {},
-            tokens: fcmTokens.map(t => t.token)
-        };
-
-        // Send to all registered tokens
-        const response = await admin.messaging().sendEachForMulticast(message);
-
-        console.log(`[FCM] Sent notifications: ${response.successCount} success, ${response.failureCount} failed`);
-
-        // Remove invalid tokens
-        if (response.failureCount > 0) {
-            const invalidTokens = [];
-            response.responses.forEach((resp, idx) => {
-                if (!resp.success) {
-                    console.log(`[FCM] Token failed:`, resp.error?.message);
-                    if (resp.error?.code === 'messaging/invalid-registration-token' ||
-                        resp.error?.code === 'messaging/registration-token-not-registered') {
-                        invalidTokens.push(fcmTokens[idx].token);
-                    }
-                }
-            });
-            // Remove invalid tokens
-            if (invalidTokens.length > 0) {
-                fcmTokens = fcmTokens.filter(t => !invalidTokens.includes(t.token));
-                fs.writeFileSync(fcmTokensFilePath, JSON.stringify(fcmTokens, null, 2), 'utf8');
-                console.log(`[FCM] Removed ${invalidTokens.length} invalid tokens`);
-            }
-        }
-
-        res.json({
-            success: true,
-            successCount: response.successCount,
-            failureCount: response.failureCount
-        });
-    } catch (error) {
-        console.error('[FCM] Send error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// --- 4. HEALTH CHECK ---
+// --- 3. HEALTH CHECK ---
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', mode: 'hybrid-server', version: '1.0.0' });
 });
@@ -435,7 +299,6 @@ app.get('/', (req, res) => {
     res.redirect('/antigravity-/');
 });
 
-// HTTP Server (port 8080)
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`
 🚀 Local Gateway Server running on http://0.0.0.0:${PORT}
@@ -444,29 +307,3 @@ app.listen(PORT, '0.0.0.0', () => {
    - Ready to proxy Gemini requests!
     `);
 });
-
-// HTTPS Server (port 8443) - for Push Notifications
-const HTTPS_PORT = 8443;
-const certPath = path.join(__dirname, 'certs', 'cert.pfx');
-
-if (fs.existsSync(certPath)) {
-    try {
-        const httpsOptions = {
-            pfx: fs.readFileSync(certPath),
-            passphrase: 'antigravity'
-        };
-
-        https.createServer(httpsOptions, app).listen(HTTPS_PORT, '0.0.0.0', () => {
-            console.log(`
-🔒 HTTPS Server running on https://0.0.0.0:${HTTPS_PORT}
-   - Use https://starai.taile8cf8f.ts.net:${HTTPS_PORT}/antigravity-/
-   - Or https://100.126.88.16:${HTTPS_PORT}/antigravity-/
-   - Push Notifications enabled!
-            `);
-        });
-    } catch (e) {
-        console.warn('⚠️ HTTPS server failed to start:', e.message);
-    }
-} else {
-    console.log('ℹ️ No HTTPS certificate found. Run with HTTP only.');
-}
