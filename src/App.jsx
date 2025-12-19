@@ -861,6 +861,12 @@ function App() {
             if (settings.cliModelFavorites && Array.isArray(settings.cliModelFavorites) && settings.cliModelFavorites.length > 0) {
               setCliModelFavorites(settings.cliModelFavorites)
             }
+            // Load synced gateway URL if available
+            if (settings.savedGatewayUrl && settings.savedGatewayUrl !== gatewayUrl) {
+              console.log('📥 Restoring saved gateway URL:', settings.savedGatewayUrl)
+              setGatewayUrl(settings.savedGatewayUrl)
+              dbSet('antigravity_gateway_url', settings.savedGatewayUrl)
+            }
           }
         } catch (e) {
           console.warn('Could not fetch synced settings:', e)
@@ -885,16 +891,16 @@ function App() {
             'Content-Type': 'application/json',
             'ngrok-skip-browser-warning': 'true'
           },
-          body: JSON.stringify({ cliModel, cliModelFavorites })
+          body: JSON.stringify({ cliModel, cliModelFavorites, savedGatewayUrl: gatewayUrl })
         })
-        console.log('📤 Synced settings to server')
+        console.log('📤 Synced settings to server (including gateway URL)')
       } catch (e) {
         console.warn('Failed to sync settings:', e)
       }
     }
     const timeoutId = setTimeout(syncToServer, 500) // Debounce 500ms
     return () => clearTimeout(timeoutId)
-  }, [cliModel, cliModelFavorites, isLocalServerAvailable, gatewayUrl])
+  }, [cliModel, cliModelFavorites, gatewayUrl, isLocalServerAvailable])
 
   // --- HELPER: Call Gemini API (Hybrid) ---
   const callGeminiAPI = async (userMessage, systemPrompt = '', context = '', conversationHistory = []) => {
