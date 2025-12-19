@@ -5077,17 +5077,19 @@ Acknowledge the touch naturally in your response and continue the conversation. 
           style={{ display: 'none' }}
         />
 
-        {/* Moaning Voice Buttons (Adult mode only) */}
+        {/* Scene Progression Buttons (Adult mode only) */}
         {contentMode === 'adult' && (
           <div style={{
             display: 'flex',
-            flexWrap: 'wrap',
-            gap: '4px',
-            padding: '4px 8px',
-            backgroundColor: '#fff5f5',
-            borderRadius: '8px',
-            marginBottom: '4px',
-            justifyContent: 'center'
+            flexWrap: 'nowrap',
+            gap: '6px',
+            padding: '6px 12px',
+            backgroundColor: 'rgba(255, 245, 245, 0.9)',
+            borderRadius: '20px',
+            marginBottom: '6px',
+            justifyContent: 'center',
+            width: 'fit-content',
+            margin: '0 auto 6px auto'
           }}>
             {[
               { label: '前戯', color: '#ffb3ba', voices: ['んっ…', 'あ…そこ…', 'くすぐったい…', 'もっと…触って…', 'んん…'] },
@@ -5102,13 +5104,15 @@ Acknowledge the touch naturally in your response and continue the conversation. 
                   setInputText(prev => prev + voice)
                 }}
                 style={{
-                  padding: '6px 12px',
-                  fontSize: '0.75rem',
-                  borderRadius: '16px',
+                  padding: '4px 10px',
+                  fontSize: '0.7rem',
+                  borderRadius: '12px',
                   border: 'none',
                   backgroundColor: cat.color,
                   cursor: 'pointer',
-                  fontWeight: 'bold'
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
                 }}
                 title={`${cat.label}の喘ぎ声をランダムで挿入`}
               >
