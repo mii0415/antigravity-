@@ -174,15 +174,24 @@ app.post('/api/gemini-proxy', async (req, res) => {
                 // Include context (long-term memory)
                 const contextSection = context ? `【長期記憶・コンテキスト】\\n${context}\\n\\n` : '';
 
+                // Memory instruction for auto-save feature
+                const memoryInstruction = `【記憶機能】
+ユーザーが「覚えていてね」「記憶して」「忘れないで」「覚えておいて」などと言った場合、
+覚えてほしい内容を [MEMORY: 内容] の形式で応答の最後に追加すること。
+例: ユーザー「私の好きな食べ物はカレーだよ、覚えていてね」
+応答: 「カレーがお好きなんですね、覚えておきますよ。[MEMORY: 主の好きな食べ物はカレー]」
+複数の情報があれば複数の[MEMORY:]タグを追加可能。\\n\\n`;
+
                 // Include system prompt from frontend settings
                 const systemPromptSection = systemPrompt ? `【キャラクター設定】\\n${systemPrompt}\\n\\n` : '';
 
                 let fullMessage = '';
                 if (req.body.isRawMode) {
                     // Raw Mode: Bypass all standard formatting and wrappers
-                    // Just combine System Prompt + Context + Character Sheet + History + Current Message
+                    // Just combine System Prompt + Memory Instruction + Context + Character Sheet + History + Current Message
                     // This is useful for "Jailbreak" style prompts that need to be the absolute first/primary instruction
                     fullMessage = (systemPrompt ? systemPrompt + '\\n\\n' : '') +
+                        memoryInstruction +
                         (contextSection || '') +
                         (characterSheetSection || '') +
                         (worldSettingSection || '') +
@@ -190,7 +199,7 @@ app.post('/api/gemini-proxy', async (req, res) => {
                         message;
                 } else {
                     // Standard Mode: Use descriptive Japanese wrappers
-                    fullMessage = chatInstruction + characterSection + userProfileSection + worldSettingSection + characterSheetSection + contextSection + systemPromptSection + historyContext + '【現在のメッセージ】\\n' + message;
+                    fullMessage = chatInstruction + characterSection + userProfileSection + worldSettingSection + characterSheetSection + contextSection + memoryInstruction + systemPromptSection + historyContext + '【現在のメッセージ】\\n' + message;
                 }
 
                 // Simple strict sanitization to avoid major injection (basic quotes)
