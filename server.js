@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import https from 'https';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -637,7 +637,7 @@ ${characterContext}
             const safePrompt = prompt.replace(/"/g, '\\"').replace(/\n/g, '\\n');
             const { stdout } = await new Promise((resolve, reject) => {
                 const fullCmd = `${cliCmd} --model ${model} "${safePrompt}"`;
-                require('child_process').exec(fullCmd, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+                exec(fullCmd, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
                     if (err) reject(err);
                     else resolve({ stdout });
                 });
@@ -682,15 +682,18 @@ const sendScheduledNotification = async (timeLabel) => {
     }
 
     // Load FCM tokens
-    let tokens = [];
+    let tokenData = [];
     try {
         if (fs.existsSync(fcmTokensFilePath)) {
-            tokens = JSON.parse(fs.readFileSync(fcmTokensFilePath, 'utf8'));
+            tokenData = JSON.parse(fs.readFileSync(fcmTokensFilePath, 'utf8'));
         }
     } catch (e) {
         console.warn('[Cron] Failed to load FCM tokens:', e.message);
         return;
     }
+
+    // Extract token strings from token objects
+    const tokens = tokenData.map(t => typeof t === 'string' ? t : t.token).filter(Boolean);
 
     if (tokens.length === 0) {
         console.log('[Cron] No FCM tokens registered, skipping notification');
@@ -751,10 +754,31 @@ const sendScheduledNotification = async (timeLabel) => {
     try {
         const response = await admin.messaging().sendEachForMulticast(payload);
         console.log(`[Cron] ${timeLabel} notification sent: ${response.successCount} success, ${response.failureCount} failed`);
+
+        // Log detailed errors for failed deliveries
+        if (response.failureCount > 0) {
+            response.responses.forEach((resp, idx) => {
+                if (!resp.success) {
+                    console.log(`[Cron] Token ${idx} failed: ${resp.error?.code} - ${resp.error?.message}`);
+                }
+            });
+        }
     } catch (e) {
         console.error('[Cron] Failed to send notification:', e.message);
     }
 };
+
+// TEST ENDPOINT: Manually trigger scheduled notification
+app.get('/api/test-notification', async (req, res) => {
+    const time = req.query.time || '07:00';
+    console.log(`[Test] Manual notification trigger for ${time}`);
+    try {
+        await sendScheduledNotification(time);
+        res.json({ success: true, message: `Notification sent for ${time}` });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 
 // Schedule: minute hour * * * (JST timezone assumed on server)
 // 7:00 AM
