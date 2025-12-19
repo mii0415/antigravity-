@@ -216,13 +216,12 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 8px;
+  padding: 6px 8px;
   background-color: var(--bg-color);
   border-top: 1px solid var(--border-color);
   display: flex;
-  align-items: flex-end;
-  /* Align to bottom for multiline inputs */
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .input-actions-left {
