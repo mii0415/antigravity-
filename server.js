@@ -44,7 +44,7 @@ app.use(cors({
     methods: ['GET', 'POST', 'OPTIONS']
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // DEBUG LOGGING
 app.use((req, res, next) => {

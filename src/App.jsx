@@ -875,6 +875,19 @@ function App() {
             }
           }
 
+          // Load profiles from server (includes memory updates)
+          const profilesRes = await fetch(`${gatewayUrl}/api/profiles`, {
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+          })
+          if (profilesRes.ok) {
+            const serverProfiles = await profilesRes.json()
+            if (serverProfiles.profiles && serverProfiles.profiles.length > 0) {
+              console.log('📥 Loaded profiles from server:', serverProfiles.profiles.length, 'profiles')
+              setProfiles(serverProfiles.profiles)
+              if (serverProfiles.activeProfileId) setActiveProfileId(serverProfiles.activeProfileId)
+            }
+          }
+
           // Load messages from server
           const messagesRes = await fetch(`${gatewayUrl}/api/messages`, {
             headers: { 'ngrok-skip-browser-warning': 'true' }
@@ -2795,7 +2808,18 @@ The message must be consistent with your character persona and tone. (Max 1 shor
 
       // Update profile
       const updatedProfile = { ...activeProfile, memory: updatedMemory }
-      setProfiles(prev => prev.map(p => p.id === activeProfile.id ? updatedProfile : p))
+      const updatedProfiles = profiles.map(p => p.id === activeProfile.id ? updatedProfile : p)
+      setProfiles(updatedProfiles)
+
+      // Sync to server immediately
+      if (gatewayUrl) {
+        fetch(`${gatewayUrl}/api/profiles`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+          body: JSON.stringify({ profiles: updatedProfiles, activeProfileId })
+        }).then(() => console.log('📤 Memory synced to server profile'))
+          .catch(e => console.warn('Failed to sync memory to server:', e))
+      }
 
       console.log('🧠 Memory saved:', newMemories)
     }
@@ -3662,6 +3686,8 @@ The message must be consistent with your character persona and tone. (Max 1 shor
     // Apply Pronoun Replacement (Global consistency check)
     if (responseText) {
       responseText = applyPronounReplacement(responseText)
+      // Extract and save [MEMORY:] tags to profile context
+      responseText = extractAndSaveMemory(responseText)
     }
 
     // Live2D表情検出デバッグ
