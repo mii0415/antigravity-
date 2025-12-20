@@ -764,7 +764,36 @@ const sendScheduledNotification = async (timeLabel) => {
             });
         }
     } catch (e) {
-        console.error('[Cron] Failed to send notification:', e.message);
+        console.error('[Cron] Failed to send FCM notification:', e.message);
+    }
+
+    // --- ntfy.sh notification (works on Xiaomi!) ---
+    const ntfyTopic = 'hasebe-notification';
+    // ASCII-only titles for ntfy.sh headers (avoid encoding issues)
+    const ntfyTitles = {
+        '07:00': 'Good Morning',
+        '12:00': 'Lunch Time',
+        '18:00': 'Evening',
+        '22:00': 'Good Night'
+    };
+    const ntfyTitle = ntfyTitles[timeLabel] || 'Notification';
+
+    try {
+        const ntfyResponse = await fetch(`https://ntfy.sh/${ntfyTopic}`, {
+            method: 'POST',
+            headers: {
+                'Title': ntfyTitle,
+                'Priority': '4' // High priority for instant delivery
+            },
+            body: aiMessage
+        });
+        if (ntfyResponse.ok) {
+            console.log(`[Cron] ntfy.sh notification sent successfully for ${timeLabel}`);
+        } else {
+            console.warn(`[Cron] ntfy.sh failed: ${ntfyResponse.status}`);
+        }
+    } catch (e) {
+        console.error('[Cron] ntfy.sh error:', e.message);
     }
 };
 
