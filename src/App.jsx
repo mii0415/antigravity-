@@ -801,12 +801,16 @@ function App() {
 
   // --- STATE: UI ---
   const [uiMode, setUiMode] = useState(() => localStorage.getItem('antigravity_ui_mode') || 'chat') // 'chat' | 'visual_novel'
+  const [appMode, setAppMode] = useState(null) // null: mode selection, 'chat': chat UI, 'phone': phone UI
+  const [phoneMessages, setPhoneMessages] = useState([]) // Messages during phone call
+  const [phoneCallStartTime, setPhoneCallStartTime] = useState(null) // For call duration display
   const [inputText, setInputText] = useState('')
   const [isFolderOpen, setIsFolderOpen] = useState(false)
   const [isMemoryOpen, setIsMemoryOpen] = useState(false)
   const [currentEmotion, setCurrentEmotion] = useState('normal')
 
   const [currentBackground, setCurrentBackground] = useState('default')
+
 
   // --- STATE: Touch Interaction ---
   const [touchCount, setTouchCount] = useState(0) // タッチ回数（エスカレーション用）
@@ -4767,2973 +4771,3191 @@ Acknowledge the touch naturally in your response and continue the conversation. 
     }
   }
 
+  // --- PHONE CALL FUNCTIONS ---
+  const handleStartPhone = () => {
+    setPhoneMessages([])
+    setPhoneCallStartTime(Date.now())
+    setAppMode('phone')
+  }
+
+  const handleEndCall = () => {
+    // Save phone conversation as new chat
+    const dateStr = new Date().toLocaleDateString('ja-JP')
+    const newSessionId = `session_${Date.now()}`
+    const newSession = {
+      id: newSessionId,
+      title: `電話 ${dateStr}`,
+      lastUpdated: Date.now()
+    }
+
+    // Create new session and set messages
+    setSessions(prev => [newSession, ...prev])
+    setActiveSessionId(newSessionId)
+    setMessages(phoneMessages)
+
+    // Switch to chat mode
+    setAppMode('chat')
+    setPhoneMessages([])
+    setPhoneCallStartTime(null)
+  }
+
+  const handlePhoneSend = async () => {
+    if (!inputText.trim()) return
+
+    const userMessage = {
+      id: `msg_${Date.now()}`,
+      text: inputText.trim(),
+      sender: 'user',
+      timestamp: new Date().toISOString()
+    }
+
+    setPhoneMessages(prev => [...prev, userMessage])
+    const userInput = inputText
+    setInputText('')
+    setIsLoading(true)
+
+    try {
+      // Phone-specific system prompt
+      const phoneSystemPrompt = `
+【重要】これは電話での会話です。
+- 声だけでの会話なので、物理的な接触（抱きしめる、触れる、キスする等）は絶対に描写しないでください
+- 視覚的な描写（顔を見る、目を見つめる、表情を見る等）も描写しないでください
+- 「声が聞こえる」「電話ごしに」「受話器越しに」などの表現を使ってください
+- 相手の存在を感じながらも物理的には離れている状況を表現してください
+`
+
+      const fullPrompt = phoneSystemPrompt + '\n\n' + buildEnhancedSystemPrompt(activeProfile) + '\n\nユーザーのメッセージ: ' + userInput
+
+      let aiResponse = ''
+      if (useCli && isLocalServerAvailable && gatewayUrl) {
+        const res = await fetch(`${gatewayUrl}/api/gemini-proxy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: userInput,
+            context: activeProfile?.context || '',
+            worldSetting: activeProfile?.worldSetting || '',
+            characterSheet: activeProfile?.characterSheet || {},
+            model: cliModel,
+            phoneMode: true,
+            phoneSystemPrompt: phoneSystemPrompt
+          })
+        })
+        const data = await res.json()
+        aiResponse = data.response || data.error || 'エラーが発生しました'
+      } else {
+        const gemini = new GoogleGenerativeAI(apiKey)
+        const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash-exp' })
+        const result = await model.generateContent(fullPrompt)
+        aiResponse = result.response.text()
+      }
+
+      // Apply pronoun replacement
+      aiResponse = applyPronounReplacement(aiResponse)
+
+      const aiMessage = {
+        id: `msg_${Date.now()}`,
+        text: aiResponse,
+        sender: 'character',
+        timestamp: new Date().toISOString()
+      }
+
+      setPhoneMessages(prev => [...prev, aiMessage])
+    } catch (e) {
+      console.error('Phone AI error:', e)
+      const errorMessage = {
+        id: `msg_${Date.now()}`,
+        text: '通話が途切れてしまいました...',
+        sender: 'character',
+        timestamp: new Date().toISOString()
+      }
+      setPhoneMessages(prev => [...prev, errorMessage])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Format call duration
+  const formatCallDuration = () => {
+    if (!phoneCallStartTime) return '00:00'
+    const elapsed = Math.floor((Date.now() - phoneCallStartTime) / 1000)
+    const mins = Math.floor(elapsed / 60).toString().padStart(2, '0')
+    const secs = (elapsed % 60).toString().padStart(2, '0')
+    return `${mins}:${secs}`
+  }
+
+  // Update call duration every second
+  useEffect(() => {
+    if (appMode !== 'phone' || !phoneCallStartTime) return
+    const timer = setInterval(() => {
+      // Force re-render for call duration
+      setPhoneCallStartTime(prev => prev)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [appMode, phoneCallStartTime])
+
   return (
     <div className={`app-container ${uiMode === 'visual_novel' ? 'visual-novel' : ''}`}>
-      {/* DEBUG PANEL - Always visible */}
-      {/* DEBUG PANEL REMOVED */}
-      {/* Header */}
-      <header className="header" style={{ zIndex: 100 }}>
-        <div className="header-content">
-          <button className="header-icon-btn" onClick={() => setIsFolderOpen(prev => !prev)} style={{ right: 'auto', left: '16px' }}>
-            <Menu size={24} />
-          </button>
-          <h1>
-            Antigravity <span style={{ fontSize: '0.5em', color: '#ccc' }}>v1.1</span>
-            <span style={{
-              fontSize: '0.5em',
-              marginLeft: '8px',
-              padding: '2px 6px',
-              borderRadius: '8px',
-              backgroundColor: contentMode === 'adult' ? '#ffcdd2' : '#e8f5e9',
-              color: contentMode === 'adult' ? '#c62828' : '#2e7d32'
-            }}>
-              {contentMode === 'adult' ? '🔥' : '😊'}
-            </span>
-            {isLoading && <span className="loading-spinner-small" title="Processing..." />}
-          </h1>
-          <div className="model-selector">
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="model-select"
-            >
-              {/* CLI Favorites - Only when Gateway available */}
-              {isLocalServerAvailable && cliModelFavorites.length > 0 && (
-                <optgroup label="★ Favorites (CLI)">
-                  {cliModelFavorites.map(m => (
-                    <option key={`cli-fav-${m}`} value={m}>🚀 {m}</option>
-                  ))}
-                </optgroup>
-              )}
-              {/* Only show favorites if any exist */}
-              {favoriteModels.length > 0 ? (
-                <>
-                  <optgroup label="★ Favorites (Gemini)">
-                    {favoriteModels.filter(m => m.startsWith('gemini') || geminiModels.includes(m)).map(m => (
-                      <option key={`fav-${m}`} value={m}>★ {m}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="★ Favorites (OpenRouter)">
-                    {favoriteModels.filter(m => !m.startsWith('ollama:') && !m.startsWith('gemini') && !geminiModels.includes(m)).map(m => (
-                      <option key={`fav-${m}`} value={m}>★ {m.includes('/') ? m.split('/').pop() : m}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="★ Favorites (Ollama)">
-                    {favoriteModels.filter(m => m.startsWith('ollama:')).map(m => (
-                      <option key={`fav-${m}`} value={m}>★ {m.replace('ollama:', '')}</option>
-                    ))}
-                  </optgroup>
-                  <option value="__open_settings__" disabled>───────────</option>
-                </>
-              ) : (
-                <option value="" disabled>★お気に入りを設定で追加</option>
-              )}
-              {/* Current model if not in favorites */}
-              {!favoriteModels.includes(selectedModel) && selectedModel && (
-                <option value={selectedModel}>{selectedModel.replace('ollama:', '')} (現在)</option>
-              )}
-            </select>
-            <ChevronDown size={14} className="select-icon" />
+      {/* MODE SELECTION SCREEN */}
+      {appMode === null && (
+        <div className="mode-selection-screen">
+          <div className="mode-selection-content">
+            <div className="mode-icon-container">
+              <img
+                src={activeProfile?.iconImage || '/default-icon.png'}
+                alt="Character"
+                className="mode-character-icon"
+                onError={(e) => e.target.style.display = 'none'}
+              />
+            </div>
+            <h1 className="mode-character-name">{activeProfile?.name || 'へし切長谷部'}</h1>
+            <div className="mode-buttons">
+              <button className="mode-btn mode-btn-chat" onClick={() => setAppMode('chat')}>
+                <MessageSquare size={32} />
+                <span>チャット</span>
+              </button>
+              <button className="mode-btn mode-btn-phone" onClick={handleStartPhone}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+                </svg>
+                <span>電話</span>
+              </button>
+            </div>
           </div>
         </div>
-        <button className="header-icon-btn" onClick={() => setIsMemoryOpen(true)}>
-          <Settings size={20} />
-        </button>
-      </header>
-
-      {/* Sidebar Overlay (Mobile/Desktop) */}
-      <div className={`sidebar-overlay ${isFolderOpen ? 'open' : ''}`} onClick={() => setIsFolderOpen(false)} />
-      <aside className={`app-sidebar ${isFolderOpen ? 'open' : ''}`}>
-        <div className="sidebar-header">
-          <h2>Chat History</h2>
-          <button className="new-chat-btn" onClick={handleCreateSession}>
-            <Plus size={16} /> New Chat
-          </button>
-        </div>
-        <div className="session-list">
-          {/* Favorites */}
-          {sessions.filter(s => s.isFavorite).length > 0 && (
-            <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#ad1457', margin: '8px 4px 4px', display: 'flex', alignItems: 'center', gap: '4px' }}><Star size={10} fill="#ad1457" /> お気に入り</div>
-          )}
-          {sessions.filter(s => s.isFavorite).map(renderSessionItem)}
-
-          {/* Folders */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '12px 4px 4px' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#555', display: 'flex', alignItems: 'center', gap: '4px' }}><Folder size={10} /> フォルダ</div>
-            <button onClick={handleCreateFolder} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#666' }} title="フォルダ作成"><Plus size={14} /></button>
-          </div>
-          {folders.map(folder => (
-            <div key={folder.id} className="sidebar-folder" style={{ marginBottom: '4px' }}>
-              <div className="folder-header" onClick={() => handleToggleFolder(folder.id)} style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '6px', borderRadius: '4px', backgroundColor: '#f0f0f0', marginBottom: '2px' }}>
-                {folder.isOpen ? <FolderOpen size={14} color="#555" /> : <Folder size={14} color="#555" />}
-                <span style={{ flex: 1, marginLeft: '6px', fontSize: '0.85rem', color: '#333', fontWeight: '500' }}>{folder.name}</span>
-                <button onClick={(e) => handleDeleteFolder(e, folder.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '2px' }}><X size={12} color="#aaa" /></button>
-              </div>
-              {folder.isOpen && (
-                <div style={{ borderLeft: '2px solid #eee', marginLeft: '10px', paddingLeft: '4px' }}>
-                  {sessions.filter(s => s.folderId === folder.id && !s.isFavorite).map(renderSessionItem)}
-                  {sessions.filter(s => s.folderId === folder.id && !s.isFavorite).length === 0 && <div style={{ fontSize: '0.7rem', color: '#aaa', padding: '4px 8px' }}>（空）</div>}
-                </div>
-              )}
-            </div>
-          ))}
-
-          {/* Uncategorized */}
-          <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#888', margin: '12px 4px 4px' }}>履歴</div>
-          {sessions.filter(s => !s.isFavorite && !s.folderId).map(renderSessionItem)}
-        </div>
-
-        {/* Sidebar Footer: Data Management */}
-        <div style={{ padding: '12px', borderTop: '1px solid #eee', display: 'flex', gap: '8px' }}>
-          <button
-            className="setting-btn"
-            onClick={handleExportHistory}
-            style={{ flex: 1, justifyContent: 'center', fontSize: '0.8rem' }}
-            title="現在のチャットをJSONで保存"
-          >
-            <DownloadCloud size={14} /> Export
-          </button>
-          <label
-            className="setting-btn"
-            style={{ flex: 1, justifyContent: 'center', fontSize: '0.8rem', cursor: 'pointer' }}
-            title="JSONファイルからチャットを復元"
-          >
-            <Upload size={14} /> Import
-            <input type="file" accept=".json" onChange={handleImportHistory} style={{ display: 'none' }} />
-          </label>
-        </div>
-      </aside>
-
-
-      {/* Visual Novel Stage (Full Screen Background) */}
-      {uiMode === 'visual_novel' && (
-        (() => {
-          if (!activeProfile) return null // Safety check for render crash
-          // Helper to resolve BG
-          const bgMap = activeProfile.backgrounds || {}
-          const resolvedBgUrl = bgMap[currentBackground] ||
-            bgMap['default'] ||
-            activeProfile.backgroundImage ||
-            (activeProfile.defaultBackground ? bgMap[activeProfile.defaultBackground] : null) || // Priority Default
-            (Object.values(bgMap).length > 0 ? Object.values(bgMap)[0] : null)
-
-          // Helper to resolve Character (大文字小文字非依存)
-          const emoMap = activeProfile.emotions || {}
-          const emoKeys = Object.keys(emoMap)
-          // ID直指定か、名前検索かで解決
-          let resolvedCharUrl = emoMap[currentEmotion]
-
-          if (!resolvedCharUrl) {
-            // 見つからない場合、名前で探してみる（大文字小文字無視）
-            const foundKey = emoKeys.find(k => k.toLowerCase() === String(currentEmotion).toLowerCase())
-            if (foundKey) resolvedCharUrl = emoMap[foundKey]
-          }
-
-          // それでもなければフォールバック
-          if (!resolvedCharUrl) {
-            const normalKey = emoKeys.find(k => k.toLowerCase() === 'normal')
-            resolvedCharUrl =
-              (normalKey ? emoMap[normalKey] : null) ||
-              (activeProfile.defaultEmotion ? emoMap[activeProfile.defaultEmotion] : null) ||
-              (emoKeys.length > 0 ? emoMap[emoKeys[0]] : null) ||
-              (activeProfile.iconImage || '')
-          }
-
-          return (
-            <div className="vn-stage" style={{
-              position: 'absolute',
-              top: 0, left: 0, right: 0, bottom: 0,
-              zIndex: 0,
-              backgroundImage: resolvedBgUrl ? `url(${resolvedBgUrl})` : 'none',
-              backgroundColor: '#222',
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              transition: 'background-image 0.5s ease-in-out'
-            }}>
-              {/* Dim BG if image exists */}
-              {resolvedBgUrl &&
-                <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.3)' }} />
-              }
-
-              {/* Live2D or Static Image */}
-              {live2dEnabled ? (
-                <div style={{
-                  position: 'absolute',
-                  bottom: '65%',
-                  left: '50%',
-                  transform: 'translate(-50%, 50%)',
-                  zIndex: 1
-                }}>
-                  <Live2DCanvas
-                    ref={live2dRef}
-                    modelPath={live2dModelPath}
-                    width={600}
-                    height={900}
-                    onModelLoad={(model) => {
-                      console.log('Live2D loaded:', model)
-                      // Apply current expression after model loads (fixes race condition)
-                      // Use Ref to get the LATEST expression, not the one from closure
-                      const latestExpr = currentExpressionRef.current
-                      if (latestExpr && live2dRef.current) {
-                        console.log('🎭 Applying expression after model load:', latestExpr)
-                        setTimeout(() => {
-                          try {
-                            live2dRef.current?.setExpression(latestExpr)
-                          } catch (e) {
-                            console.warn('Expression apply after load failed:', e)
-                          }
-                        }, 500) // Increase delay to ensure model is fully ready
-                      }
-                    }}
-                    onModelError={(err) => console.error('Live2D error:', err)}
-                    onHitAreaTap={handleLive2DTap}
-                    onLongPress={handleLive2DLongPress}
-                    currentExpression={currentExpression} // Pass state for persistence
-                  />
-                  {/* Debug overlay for mobile testing */}
-                  <div style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    background: 'rgba(0,0,0,0.7)',
-                    color: '#0f0',
-                    fontSize: '10px',
-                    padding: '4px',
-                    fontFamily: 'monospace',
-                    zIndex: 999,
-                    pointerEvents: 'none'
-                  }}>
-                    <div>Expr: {currentExpression}</div>
-                    <div>L2D: {live2dEnabled ? 'ON' : 'OFF'}</div>
-                    <div>Ref: {live2dRef.current ? 'OK' : 'NULL'}</div>
-                  </div>
-                </div>
-              ) : (
-                <img
-                  src={resolvedCharUrl}
-                  alt="Character"
-                  className="tachie-img"
-                  onClick={handleCharacterClick}
-                  onTouchStart={handleCharacterTouchStart}
-                  onTouchMove={handleCharacterTouchMove}
-                  onTouchEnd={handleCharacterTouchEnd}
-                  style={{
-                    position: 'absolute',
-                    bottom: '35%',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    height: '75dvh',
-                    maxHeight: '75dvh',
-                    width: 'auto',
-                    objectFit: 'contain',
-                    filter: 'drop-shadow(0 0 20px rgba(0,0,0,0.7))',
-                    transition: 'all 0.3s ease',
-                    cursor: 'pointer'
-                  }}
-                />
-              )}
-            </div>
-          )
-        })()
       )}
 
-      {/* Chat Area (Overlay for VN Mode) */}
-      <main className="chat-area" ref={chatAreaRef} style={uiMode === 'visual_novel' ? {
-        position: 'absolute',
-        bottom: '20px', // Restored requested position
-        left: 0,
-        right: 0,
-        height: '50%', // Expanded to show more chat history
-        zIndex: 10,
-        background: 'rgba(0,0,0,0.7)', // Semi-transparent to see character through
-        backdropFilter: 'blur(4px)',
-        padding: '10px 10px 60px 10px', // Added bottom padding to prevent overlap with input/overlay
-        overflowY: 'auto',
-        borderTop: '1px solid rgba(255,255,255,0.2)'
-      } : {}}>
-
-
-        {!isLoading && messages.length === 0 && (
-          <div className="home-screen-content" style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            color: '#666',
-            gap: '24px',
-            padding: '20px'
-          }}>
-            <div style={{ textAlign: 'center' }}>
-              <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#333' }}>Antigravity</span>
-              <p style={{ fontSize: '0.9rem', color: '#888' }}>Select a chat or start a new conversation</p>
+      {/* PHONE CALL SCREEN */}
+      {appMode === 'phone' && (
+        <div className="phone-call-screen">
+          <div className="phone-header">
+            <div className="phone-caller-info">
+              <img
+                src={activeProfile?.iconImage || '/default-icon.png'}
+                alt="Caller"
+                className="phone-caller-icon"
+                onError={(e) => e.target.style.display = 'none'}
+              />
+              <div className="phone-caller-details">
+                <span className="phone-caller-name">{activeProfile?.name || 'へし切長谷部'}</span>
+                <span className="phone-call-duration">{formatCallDuration()}</span>
+              </div>
             </div>
           </div>
-        )}
 
-        {messages.map((msg) => {
-          let avatarContent = <User size={20} />
-          let avatarStyle = {}
-          if (msg.sender === 'ai') {
-            const profile = msg.profile || activeProfile
-
-            // Emotion Icon Logic
-            let iconSrc = null
-            if (profile) {
-              // Priority 1: Check saved emotion property (New logic)
-              if (msg.emotion && profile.emotions) {
-                const key = Object.keys(profile.emotions).find(k => k.toLowerCase() === msg.emotion.toLowerCase())
-                if (key) {
-                  iconSrc = profile.emotions[key]
-                }
-              }
-
-              // Priority 2: Check for emotion tag in text (Fallback / old logic)
-              // Note: cleanResponseText removes tags, so this mostly fails for history,
-              // but kept for uncleaned text scenarios.
-              if (!iconSrc && profile.emotions && msg.text) {
-                const match = msg.text.match(/[\[【](.*?)[\]】]/)
-                if (match) {
-                  const tag = match[1]
-                  // Try explicit mapping in case it's Japanese tag remaining
-                  const normalized = emotionToExpression[tag] || tag
-                  const key = Object.keys(profile.emotions).find(k => k.toLowerCase() === normalized.toLowerCase())
-                  if (key) {
-                    iconSrc = profile.emotions[key]
-                  }
-                }
-              }
-
-              // Priority 3: Default Icon
-              if (!iconSrc) {
-                iconSrc = profile.iconImage
-              }
-            }
-
-            if (iconSrc) {
-              const isDefaultIcon = (iconSrc === profile.iconImage)
-              const imgClass = isDefaultIcon ? "default-avatar-img" : "custom-avatar-img"
-              avatarContent = <img src={iconSrc} alt="AI" className={imgClass} />
-              avatarStyle = {
-                width: `${profile.iconSize || 40}px`,
-                height: `${profile.iconSize || 40}px`,
-                minWidth: `${profile.iconSize || 40}px`
-              }
-            } else {
-              avatarContent = <Bot size={20} />
-            }
-          }
-          const isEditing = editingMessageId === msg.id
-
-          return (
-            <div key={msg.id} className={`message-row ${msg.sender === 'user' ? 'user-row' : 'ai-row'}`}>
-              <div className={`avatar ${msg.sender}`} style={{ ...avatarStyle, display: uiMode === 'visual_novel' ? 'none' : 'flex' }}>
-                {avatarContent}
+          <div className="phone-messages-container">
+            {phoneMessages.length === 0 && (
+              <div className="phone-connecting">
+                <span>📞 通話中...</span>
               </div>
-              <div className="message-content">
-                {msg.sender === 'ai' && msg.model && (
-                  <span className="model-badge">{msg.model}</span>
-                )}
-                <div className="message-bubble-container">
-                  {isEditing ? (
-                    <div className="edit-message-box">
-                      <textarea
-                        className="edit-message-input"
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        rows={3}
+            )}
+            {phoneMessages.map((msg, idx) => (
+              <div key={msg.id || idx} className={`phone-message phone-message-${msg.sender}`}>
+                <span className="phone-message-sender">{msg.sender === 'user' ? '私' : activeProfile?.name || '長谷部'}</span>
+                <p className="phone-message-text">{msg.text}</p>
+              </div>
+            ))}
+            {isLoading && (
+              <div className="phone-message phone-message-character">
+                <span className="phone-message-sender">{activeProfile?.name || '長谷部'}</span>
+                <p className="phone-message-text typing-indicator">...</p>
+              </div>
+            )}
+          </div>
+
+          <div className="phone-input-area">
+            <input
+              type="text"
+              className="phone-input"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handlePhoneSend()}
+              placeholder="話す..."
+              disabled={isLoading}
+            />
+            <button className="phone-send-btn" onClick={handlePhoneSend} disabled={isLoading || !inputText.trim()}>
+              <Send size={20} />
+            </button>
+          </div>
+
+          <button className="phone-end-call-btn" onClick={handleEndCall}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="none">
+              <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.68-1.36-2.66-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
+            </svg>
+            通話終了
+          </button>
+        </div>
+      )}
+
+      {/* MAIN CHAT APP (only show when appMode is 'chat') */}
+      {appMode === 'chat' && (
+        <div className="chat-app-container">
+          {/* DEBUG PANEL - Always visible */}
+          {/* DEBUG PANEL REMOVED */}
+          {/* Header */}
+          <header className="header" style={{ zIndex: 100 }}>
+            <div className="header-content">
+              <button className="header-icon-btn" onClick={() => setIsFolderOpen(prev => !prev)} style={{ right: 'auto', left: '16px' }}>
+                <Menu size={24} />
+              </button>
+              <h1>
+                Antigravity <span style={{ fontSize: '0.5em', color: '#ccc' }}>v1.1</span>
+                <span style={{
+                  fontSize: '0.5em',
+                  marginLeft: '8px',
+                  padding: '2px 6px',
+                  borderRadius: '8px',
+                  backgroundColor: contentMode === 'adult' ? '#ffcdd2' : '#e8f5e9',
+                  color: contentMode === 'adult' ? '#c62828' : '#2e7d32'
+                }}>
+                  {contentMode === 'adult' ? '🔥' : '😊'}
+                </span>
+                {isLoading && <span className="loading-spinner-small" title="Processing..." />}
+              </h1>
+              <div className="model-selector">
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="model-select"
+                >
+                  {/* CLI Favorites - Only when Gateway available */}
+                  {isLocalServerAvailable && cliModelFavorites.length > 0 && (
+                    <optgroup label="★ Favorites (CLI)">
+                      {cliModelFavorites.map(m => (
+                        <option key={`cli-fav-${m}`} value={m}>🚀 {m}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {/* Only show favorites if any exist */}
+                  {favoriteModels.length > 0 ? (
+                    <>
+                      <optgroup label="★ Favorites (Gemini)">
+                        {favoriteModels.filter(m => m.startsWith('gemini') || geminiModels.includes(m)).map(m => (
+                          <option key={`fav-${m}`} value={m}>★ {m}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="★ Favorites (OpenRouter)">
+                        {favoriteModels.filter(m => !m.startsWith('ollama:') && !m.startsWith('gemini') && !geminiModels.includes(m)).map(m => (
+                          <option key={`fav-${m}`} value={m}>★ {m.includes('/') ? m.split('/').pop() : m}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="★ Favorites (Ollama)">
+                        {favoriteModels.filter(m => m.startsWith('ollama:')).map(m => (
+                          <option key={`fav-${m}`} value={m}>★ {m.replace('ollama:', '')}</option>
+                        ))}
+                      </optgroup>
+                      <option value="__open_settings__" disabled>───────────</option>
+                    </>
+                  ) : (
+                    <option value="" disabled>★お気に入りを設定で追加</option>
+                  )}
+                  {/* Current model if not in favorites */}
+                  {!favoriteModels.includes(selectedModel) && selectedModel && (
+                    <option value={selectedModel}>{selectedModel.replace('ollama:', '')} (現在)</option>
+                  )}
+                </select>
+                <ChevronDown size={14} className="select-icon" />
+              </div>
+            </div>
+            <button className="header-icon-btn" onClick={() => setIsMemoryOpen(true)}>
+              <Settings size={20} />
+            </button>
+          </header>
+
+          {/* Sidebar Overlay (Mobile/Desktop) */}
+          <div className={`sidebar-overlay ${isFolderOpen ? 'open' : ''}`} onClick={() => setIsFolderOpen(false)} />
+          <aside className={`app-sidebar ${isFolderOpen ? 'open' : ''}`}>
+            <div className="sidebar-header">
+              <h2>Chat History</h2>
+              <button className="new-chat-btn" onClick={handleCreateSession}>
+                <Plus size={16} /> New Chat
+              </button>
+            </div>
+            <div className="session-list">
+              {/* Favorites */}
+              {sessions.filter(s => s.isFavorite).length > 0 && (
+                <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#ad1457', margin: '8px 4px 4px', display: 'flex', alignItems: 'center', gap: '4px' }}><Star size={10} fill="#ad1457" /> お気に入り</div>
+              )}
+              {sessions.filter(s => s.isFavorite).map(renderSessionItem)}
+
+              {/* Folders */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '12px 4px 4px' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#555', display: 'flex', alignItems: 'center', gap: '4px' }}><Folder size={10} /> フォルダ</div>
+                <button onClick={handleCreateFolder} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#666' }} title="フォルダ作成"><Plus size={14} /></button>
+              </div>
+              {folders.map(folder => (
+                <div key={folder.id} className="sidebar-folder" style={{ marginBottom: '4px' }}>
+                  <div className="folder-header" onClick={() => handleToggleFolder(folder.id)} style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '6px', borderRadius: '4px', backgroundColor: '#f0f0f0', marginBottom: '2px' }}>
+                    {folder.isOpen ? <FolderOpen size={14} color="#555" /> : <Folder size={14} color="#555" />}
+                    <span style={{ flex: 1, marginLeft: '6px', fontSize: '0.85rem', color: '#333', fontWeight: '500' }}>{folder.name}</span>
+                    <button onClick={(e) => handleDeleteFolder(e, folder.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '2px' }}><X size={12} color="#aaa" /></button>
+                  </div>
+                  {folder.isOpen && (
+                    <div style={{ borderLeft: '2px solid #eee', marginLeft: '10px', paddingLeft: '4px' }}>
+                      {sessions.filter(s => s.folderId === folder.id && !s.isFavorite).map(renderSessionItem)}
+                      {sessions.filter(s => s.folderId === folder.id && !s.isFavorite).length === 0 && <div style={{ fontSize: '0.7rem', color: '#aaa', padding: '4px 8px' }}>（空）</div>}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Uncategorized */}
+              <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#888', margin: '12px 4px 4px' }}>履歴</div>
+              {sessions.filter(s => !s.isFavorite && !s.folderId).map(renderSessionItem)}
+            </div>
+
+            {/* Sidebar Footer: Data Management */}
+            <div style={{ padding: '12px', borderTop: '1px solid #eee', display: 'flex', gap: '8px' }}>
+              <button
+                className="setting-btn"
+                onClick={handleExportHistory}
+                style={{ flex: 1, justifyContent: 'center', fontSize: '0.8rem' }}
+                title="現在のチャットをJSONで保存"
+              >
+                <DownloadCloud size={14} /> Export
+              </button>
+              <label
+                className="setting-btn"
+                style={{ flex: 1, justifyContent: 'center', fontSize: '0.8rem', cursor: 'pointer' }}
+                title="JSONファイルからチャットを復元"
+              >
+                <Upload size={14} /> Import
+                <input type="file" accept=".json" onChange={handleImportHistory} style={{ display: 'none' }} />
+              </label>
+            </div>
+          </aside>
+
+
+          {/* Visual Novel Stage (Full Screen Background) */}
+          {uiMode === 'visual_novel' && (
+            (() => {
+              if (!activeProfile) return null // Safety check for render crash
+              // Helper to resolve BG
+              const bgMap = activeProfile.backgrounds || {}
+              const resolvedBgUrl = bgMap[currentBackground] ||
+                bgMap['default'] ||
+                activeProfile.backgroundImage ||
+                (activeProfile.defaultBackground ? bgMap[activeProfile.defaultBackground] : null) || // Priority Default
+                (Object.values(bgMap).length > 0 ? Object.values(bgMap)[0] : null)
+
+              // Helper to resolve Character (大文字小文字非依存)
+              const emoMap = activeProfile.emotions || {}
+              const emoKeys = Object.keys(emoMap)
+              // ID直指定か、名前検索かで解決
+              let resolvedCharUrl = emoMap[currentEmotion]
+
+              if (!resolvedCharUrl) {
+                // 見つからない場合、名前で探してみる（大文字小文字無視）
+                const foundKey = emoKeys.find(k => k.toLowerCase() === String(currentEmotion).toLowerCase())
+                if (foundKey) resolvedCharUrl = emoMap[foundKey]
+              }
+
+              // それでもなければフォールバック
+              if (!resolvedCharUrl) {
+                const normalKey = emoKeys.find(k => k.toLowerCase() === 'normal')
+                resolvedCharUrl =
+                  (normalKey ? emoMap[normalKey] : null) ||
+                  (activeProfile.defaultEmotion ? emoMap[activeProfile.defaultEmotion] : null) ||
+                  (emoKeys.length > 0 ? emoMap[emoKeys[0]] : null) ||
+                  (activeProfile.iconImage || '')
+              }
+
+              return (
+                <div className="vn-stage" style={{
+                  position: 'absolute',
+                  top: 0, left: 0, right: 0, bottom: 0,
+                  zIndex: 0,
+                  backgroundImage: resolvedBgUrl ? `url(${resolvedBgUrl})` : 'none',
+                  backgroundColor: '#222',
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  transition: 'background-image 0.5s ease-in-out'
+                }}>
+                  {/* Dim BG if image exists */}
+                  {resolvedBgUrl &&
+                    <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.3)' }} />
+                  }
+
+                  {/* Live2D or Static Image */}
+                  {live2dEnabled ? (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: '65%',
+                      left: '50%',
+                      transform: 'translate(-50%, 50%)',
+                      zIndex: 1
+                    }}>
+                      <Live2DCanvas
+                        ref={live2dRef}
+                        modelPath={live2dModelPath}
+                        width={600}
+                        height={900}
+                        onModelLoad={(model) => {
+                          console.log('Live2D loaded:', model)
+                          // Apply current expression after model loads (fixes race condition)
+                          // Use Ref to get the LATEST expression, not the one from closure
+                          const latestExpr = currentExpressionRef.current
+                          if (latestExpr && live2dRef.current) {
+                            console.log('🎭 Applying expression after model load:', latestExpr)
+                            setTimeout(() => {
+                              try {
+                                live2dRef.current?.setExpression(latestExpr)
+                              } catch (e) {
+                                console.warn('Expression apply after load failed:', e)
+                              }
+                            }, 500) // Increase delay to ensure model is fully ready
+                          }
+                        }}
+                        onModelError={(err) => console.error('Live2D error:', err)}
+                        onHitAreaTap={handleLive2DTap}
+                        onLongPress={handleLive2DLongPress}
+                        currentExpression={currentExpression} // Pass state for persistence
                       />
-                      <div className="edit-actions">
-                        {msg.sender === 'user' && (
-                          <button className="edit-btn regenerate" onClick={() => handleEditSave(true)} title="保存して再生成">
-                            <RefreshCw size={16} />
-                          </button>
-                        )}
-                        <button className="edit-btn save" onClick={() => handleEditSave(false)} title="保存">
-                          <Check size={16} />
-                        </button>
-                        <button className="edit-btn cancel" onClick={handleEditCancel} title="キャンセル">
-                          <X size={16} />
-                        </button>
+                      {/* Debug overlay for mobile testing */}
+                      <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        background: 'rgba(0,0,0,0.7)',
+                        color: '#0f0',
+                        fontSize: '10px',
+                        padding: '4px',
+                        fontFamily: 'monospace',
+                        zIndex: 999,
+                        pointerEvents: 'none'
+                      }}>
+                        <div>Expr: {currentExpression}</div>
+                        <div>L2D: {live2dEnabled ? 'ON' : 'OFF'}</div>
+                        <div>Ref: {live2dRef.current ? 'OK' : 'NULL'}</div>
                       </div>
                     </div>
                   ) : (
-                    <div className="message-bubble group" style={uiMode === 'visual_novel' ? { backgroundColor: 'rgba(255,255,255,0.3)' } : {}}>
-                      {msg.file && (
-                        <div className="file-attachment-bubble">
-                          <Paperclip size={14} />
-                          <span>{msg.file}</span>
-                        </div>
-                      )}
-                      {msg.files && msg.files.map((fname, idx) => (
-                        <div key={idx} className="file-attachment-bubble">
-                          <Paperclip size={14} />
-                          <span>{fname}</span>
-                        </div>
-                      ))}
-                      <div className="message-text">{cleanResponseText(msg.text)}</div>
-
-                      {/* Actions (visible on hover or always on mobile) */}
-                      <div className="message-actions">
-                        {msg.sender === 'ai' && (
-                          <>
-                            {/* TTS Replay Button */}
-                            {/* TTS Replay Button */}
-                            <button
-                              className={`action-btn ${playingMessageId === msg.id ? 'active-tts' : ''}`}
-                              onClick={() => speakText(msg.text, msg.id)}
-                              title={playingMessageId === msg.id ? "読み上げ停止" : "読み上げ"}
-                            >
-                              {playingMessageId === msg.id ? <StopCircle size={12} color="#ef5350" /> : <Volume2 size={12} />}
-                            </button>
-                            <button className="action-btn" onClick={() => handleRegenerate(msg.id)} title="再生成">
-                              <RotateCw size={12} />
-                            </button>
-                            {(msg.variants && msg.variants.length > 1) && (
-                              <div className="variant-pager">
-                                <button className="pager-btn" onClick={() => handleVariantSwitch(msg.id, -1)} disabled={msg.currentVariantIndex === 0}>
-                                  <ChevronLeft size={10} />
-                                </button>
-                                <span className="pager-text">{msg.currentVariantIndex + 1} / {msg.variants.length}</span>
-                                <button className="pager-btn" onClick={() => handleVariantSwitch(msg.id, 1)} disabled={msg.currentVariantIndex === msg.variants.length - 1}>
-                                  <ChevronRight size={10} />
-                                </button>
-                              </div>
-                            )}
-                          </>
-                        )}
-                        <button className="action-btn" onClick={() => handleEditStart(msg)} title="編集">
-                          <Edit2 size={12} />
-                        </button>
-                        <button className="action-btn delete" onClick={() => handleDeleteMessage(msg.id)} title="削除">
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )
-        })
-        }
-        <div ref={messagesEndRef} />
-      </main >
-
-
-
-
-      {/* Input Area (Z-Index fix for VN Mode) */}
-      < footer className="input-area" style={{ zIndex: 20 }}>
-        <input
-          type="file"
-          multiple
-          ref={fileInputRef}
-          onChange={handleFileSelect}
-          style={{ display: 'none' }}
-        />
-
-        {/* Scene Progression Buttons (Adult mode only) */}
-        {contentMode === 'adult' && (
-          <div style={{
-            display: 'flex',
-            flexWrap: 'nowrap',
-            gap: '6px',
-            padding: '6px 12px',
-            backgroundColor: 'rgba(255, 245, 245, 0.9)',
-            borderRadius: '20px',
-            marginBottom: '6px',
-            justifyContent: 'center',
-            width: 'fit-content',
-            margin: '0 auto 6px auto'
-          }}>
-            {[
-              { label: '前戯', color: '#ffb3ba', voices: ['んっ…', 'あ…そこ…', 'くすぐったい…', 'もっと…触って…', 'んん…'] },
-              { label: '中盤', color: '#ffdfba', voices: ['あっ…あっ…', 'やっ…そこっ…', '気持ちいい…', 'んあっ…', 'もっと…強く…'] },
-              { label: '絶頂前', color: '#ffffba', voices: ['あっあっあっ…!', 'だめっ…イっ…', 'もうダメ…もうっ…', 'やばっ…やばいっ…', '来るっ…!'] },
-              { label: '絶頂後', color: '#baffc9', voices: ['はぁ…はぁ…', 'すごかった…', 'まだ…ビクビクしてる…', 'とろけちゃう…', '幸せ…'] }
-            ].map(cat => (
-              <button
-                key={cat.label}
-                onClick={() => {
-                  const voice = cat.voices[Math.floor(Math.random() * cat.voices.length)]
-                  setInputText(prev => prev + voice)
-                }}
-                style={{
-                  padding: '4px 10px',
-                  fontSize: '0.7rem',
-                  borderRadius: '12px',
-                  border: 'none',
-                  backgroundColor: cat.color,
-                  cursor: 'pointer',
-                  fontWeight: 'bold',
-                  whiteSpace: 'nowrap',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                }}
-                title={`${cat.label}の喘ぎ声をランダムで挿入`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Input Row */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
-          <div className="input-actions-left">
-            <button className="icon-btn" onClick={() => fileInputRef.current.click()}>
-              <Paperclip size={24} />
-            </button>
-          </div>
-          <div className="input-wrapper-container">
-            {attachedFiles.length > 0 && (
-              <div className="active-files-list">
-                {attachedFiles.map((file, index) => (
-                  <div key={index} className="active-file-preview">
-                    <span className="file-name">{file.name}</span>
-                    <button className="remove-file-btn" onClick={() => handleRemoveFile(index)}>
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="input-wrapper">
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={handleKeyPress}
-                placeholder={`${selectedModel} にメッセージを送信...`}
-                rows={1}
-              />
-            </div>
-          </div>
-          <button
-            className="icon-btn"
-            onClick={toggleVoiceInput}
-            style={{
-              backgroundColor: isListening ? '#ffcdd2' : 'transparent',
-              borderRadius: '50%',
-              padding: '8px'
-            }}
-            title={isListening ? '音声入力停止' : '音声入力開始'}
-          >
-            {isListening ? <MicOff size={20} color="#c62828" /> : <Mic size={20} />}
-          </button>
-          <button className="send-btn" onClick={handleSend} disabled={!inputText.trim() && attachedFiles.length === 0}>
-            <Send size={20} />
-          </button>
-        </div>
-      </footer >
-
-
-
-      {/* Memory Modal */}
-      {
-        isMemoryOpen && (
-          <div className="modal-overlay" onClick={() => setIsMemoryOpen(false)}>
-            <div className="modal-content memory-modal" onClick={e => e.stopPropagation()}>
-              <div className="modal-header">
-                <h3>設定・プロファイル</h3>
-                <button onClick={() => setIsMemoryOpen(false)}><X size={20} /></button>
-              </div>
-
-              <div className="memory-settings-container">
-                {/* API Keys Section (Combined) */}
-                <div className="memory-section api-key-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsApiKeysOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isApiKeysOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <Key size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>API Keys</label>
-                    </div>
-                  </div>
-
-                  {isApiKeysOpen && (
-                    <>
-                      {/* Gemini API Key */}
-                      <div style={{ marginTop: '8px', marginBottom: '12px' }}>
-                        <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#1565c0' }}>Gemini API キー</label>
-                        <input
-                          type="password"
-                          className="api-key-input"
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          placeholder="APIキーを入力 (Google AI Studioから取得)"
-                          style={{ marginTop: '4px' }}
-                        />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                          {!apiKey && (
-                            <p className="api-key-hint" style={{ margin: 0 }}>
-                              ※ <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">ここで無料取得</a>
-                            </p>
-                          )}
-                          <button
-                            onClick={async () => {
-                              if (!apiKey) return alert('APIキーを入力してください');
-                              try {
-                                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-                                const data = await res.json();
-                                if (res.ok && data.models) {
-                                  const modelNames = data.models
-                                    .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
-                                    .map(m => m.name.replace('models/', ''))
-                                    .join('\n');
-                                  alert(`✅ 利用可能なモデル一覧:\n${modelNames || 'なし (None)'}\n\nこの中にある名前を選べば動きます！`);
-                                } else {
-                                  alert(`❌ モデル取得失敗\nCode: ${data.error?.code}\nMessage: ${data.error?.message}`);
-                                }
-                              } catch (e) {
-                                alert(`❌ 通信エラー\n${e.message}`);
-                              }
-                            }}
-                            style={{
-                              fontSize: '0.8rem', padding: '4px 8px', cursor: 'pointer',
-                              backgroundColor: '#e3f2fd', border: '1px solid #90caf9', borderRadius: '4px', color: '#1565c0'
-                            }}
-                          >
-                            利用可能なモデルを確認
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* OpenRouter API Key */}
-                      <div style={{ paddingTop: '8px', borderTop: '1px dashed #ccc' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#006064' }}>OpenRouter API Key</label>
-                          <span style={{ fontSize: '0.7rem', backgroundColor: '#e0f7fa', color: '#006064', padding: '2px 6px', borderRadius: '4px' }}>New</span>
-                        </div>
-                        <input
-                          type="password"
-                          className="api-key-input"
-                          value={openRouterApiKey}
-                          onChange={(e) => setOpenRouterApiKey(e.target.value)}
-                          placeholder="sk-or-..."
-                          style={{ marginTop: '4px' }}
-                        />
-                        <p className="api-key-hint">
-                          ※ <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">Keysはこちら</a> (Kimi, GLM等を使用する場合に必要)
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Model Selection Section (Combined) */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsModelSelectOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isModelSelectOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <Bot size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>モデル選択</label>
-                    </div>
-                  </div>
-
-                  {isModelSelectOpen && (
-                    <>
-                      {/* === Gemini Models === */}
-                      <div style={{ marginTop: '8px', marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px dashed #ccc' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#1565c0' }}>Gemini モデル</label>
-                          <button onClick={fetchGeminiModels} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
-                        </div>
-                        <input
-                          type="text"
-                          placeholder="🔍 モデル検索..."
-                          value={geminiSearchQuery}
-                          onChange={(e) => setGeminiSearchQuery(e.target.value)}
-                          onFocus={() => setIsGeminiSeeking(true)}
-                          onBlur={() => setTimeout(() => setIsGeminiSeeking(false), 200)}
-                          style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
-                        />
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
-                          {favoriteModels.filter(m => m.startsWith('gemini') || geminiModels.includes(m)).map(m => (
-                            <div key={m} style={{
-                              display: 'inline-flex', alignItems: 'center', gap: '6px',
-                              padding: '4px 10px', borderRadius: '16px',
-                              backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
-                              border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                            }}>
-                              <span onClick={() => { setSelectedModel(m); setCliModel(m) }} style={{ cursor: 'pointer', fontWeight: '500' }} title="クリックで選択">{m}</span>
-                              <button onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold' }} title="削除">×</button>
-                            </div>
-                          ))}
-                        </div>
-                        {(geminiSearchQuery || isGeminiSeeking) && (
-                          <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
-                            {geminiModels.filter(m => !geminiSearchQuery || m.toLowerCase().includes(geminiSearchQuery.toLowerCase())).map(m => (
-                              <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => { setSelectedModel(m); setCliModel(m) }}>
-                                <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m}</span>
-                                <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
-                              </div>
-                            ))}
-                            {geminiModels.filter(m => m.toLowerCase().includes(geminiSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* === OpenRouter Models === */}
-                      <div style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px dashed #ccc' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#006064' }}>OpenRouter モデル</label>
-                          <button onClick={fetchOpenRouterModels} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
-                        </div>
-                        <input
-                          type="text"
-                          placeholder="🔍 モデル検索..."
-                          value={orSearchQuery}
-                          onChange={(e) => setOrSearchQuery(e.target.value)}
-                          onFocus={() => setIsOrSeeking(true)}
-                          onBlur={() => setTimeout(() => setIsOrSeeking(false), 200)}
-                          style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
-                        />
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
-                          {favoriteModels.filter(m => !m.startsWith('ollama:') && !m.startsWith('gemini') && !geminiModels.includes(m)).map(m => (
-                            <div key={m} style={{
-                              display: 'inline-flex', alignItems: 'center', gap: '6px',
-                              padding: '4px 10px', borderRadius: '16px',
-                              backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
-                              border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                            }}>
-                              <span onClick={() => { setSelectedModel(m); setCliModel(m) }} style={{ cursor: 'pointer', fontWeight: '500' }} title="クリックで選択">{m.includes('/') ? m.split('/').pop() : m}</span>
-                              <button onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold' }} title="削除">×</button>
-                            </div>
-                          ))}
-                        </div>
-                        {(orSearchQuery || isOrSeeking) && (
-                          <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
-                            {openRouterModels.filter(m => !orSearchQuery || m.toLowerCase().includes(orSearchQuery.toLowerCase())).slice(0, 100).map(m => (
-                              <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => setSelectedModel(m)}>
-                                <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m}</span>
-                                <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
-                              </div>
-                            ))}
-                            {openRouterModels.filter(m => m.toLowerCase().includes(orSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* === Ollama Models === */}
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#4caf50' }}>Ollama モデル (ローカル)</label>
-                          <button onClick={() => fetchLocalModels(false)} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
-                        </div>
-                        <input
-                          type="text"
-                          placeholder="🔍 モデル検索..."
-                          value={ollamaSearchQuery}
-                          onChange={(e) => setOllamaSearchQuery(e.target.value)}
-                          onFocus={() => setIsOllamaSeeking(true)}
-                          onBlur={() => setTimeout(() => setIsOllamaSeeking(false), 200)}
-                          style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
-                        />
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
-                          {favoriteModels.filter(m => m.startsWith('ollama:')).map(m => (
-                            <div key={m} style={{
-                              display: 'inline-flex', alignItems: 'center', gap: '6px',
-                              padding: '4px 10px', borderRadius: '16px',
-                              backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
-                              border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                            }}>
-                              <span onClick={() => setSelectedModel(m)} style={{ cursor: 'pointer', fontWeight: '500' }} title="クリックで選択">{m.replace('ollama:', '')}</span>
-                              <button onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold' }} title="削除">×</button>
-                            </div>
-                          ))}
-                        </div>
-                        {(ollamaSearchQuery || isOllamaSeeking) && (
-                          <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
-                            {ollamaModels.filter(m => !ollamaSearchQuery || m.toLowerCase().includes(ollamaSearchQuery.toLowerCase())).map(m => (
-                              <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => setSelectedModel(m)}>
-                                <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m.replace('ollama:', '')}</span>
-                                <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
-                              </div>
-                            ))}
-                            {ollamaModels.filter(m => m.toLowerCase().includes(ollamaSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
-                          </div>
-                        )}
-                      </div>
-
-                      <p style={{ fontSize: '10px', color: '#666', textAlign: 'center', margin: '8px 0 0 0' }}>モデル名クリックで選択 / ★でお気に入り登録 → ホーム画面に表示</p>
-                    </>
-                  )}
-                </div>
-
-                {/* Character Notification (Alarm) Section */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsCharNotifOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isCharNotifOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>キャラからの通知 (Alarm)</label>
-                    </div>
-                  </div>
-
-                  {isCharNotifOpen && (
-                    <>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
-                        <input
-                          type="time"
-                          className="api-key-input"
-                          value={alarmTime}
-                          onChange={(e) => setAlarmTime(e.target.value)}
-                          style={{ maxWidth: '120px' }}
-                        />
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}>
-                          <input
-                            type="checkbox"
-                            checked={scheduledNotificationsEnabled}
-                            onChange={(e) => {
-                              if (e.target.checked && Notification.permission !== "granted") {
-                                Notification.requestPermission().then(p => {
-                                  if (p === "granted") setScheduledNotificationsEnabled(true)
-                                  else setScheduledNotificationsEnabled(false)
-                                })
-                              } else {
-                                setScheduledNotificationsEnabled(e.target.checked)
-                              }
-                            }}
-                          />
-                          時報(7/12/22時)
-                        </label>
-                        <button
-                          onClick={() => {
-                            if (Notification.permission === 'granted') {
-                              triggerAlarm('00:00 (TEST)', true)
-                              alert('テスト通知を実行しました！\n通知がじきに表示されます。')
-                            } else {
-                              requestNotificationPermission()
-                            }
-                          }}
-                          className="setting-btn"
-                          title="通知テスト＆許可"
-                        >
-                          <RefreshCw size={14} /> 通知テスト (即実行)
-                        </button>
-                      </div>
-                      <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
-                        ※このページを開いている間は、設定画面を閉じても有効です。時間になるとキャラが話しかけます。<br />
-                        <strong style={{ color: '#e65100' }}>【スマホの方へ】</strong> 通知が出ない場合は、ブラウザのメニューから<strong>「ホーム画面に追加」</strong>して、アプリアイコンから起動してください。
-                      </p>
-                    </>
-                  )}
-                </div>
-
-                {/* Notification/Touch AI Model Section (SEPARATE) */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsNotifModelOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isNotifModelOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <label className="setting-label" style={{ cursor: 'pointer', color: '#e65100' }}>通知/タッチ用AIモデル</label>
-                    </div>
-                  </div>
-
-                  {isNotifModelOpen && (
-                    <>
-                      <p style={{ fontSize: '0.7rem', color: '#888', marginBottom: '4px', marginTop: '8px' }}>
-                        時報・アラーム・タッチ反応で使用するモデルを指定できます。空の場合はチャット用モデルを使用。
-                      </p>
-                      <input
-                        type="text"
-                        className="api-key-input"
-                        value={notificationModel}
-                        onChange={(e) => setNotificationModel(e.target.value)}
-                        placeholder={`現在のチャットモデル: ${selectedModel}`}
-                        style={{ width: '100%' }}
-                        onFocus={() => setIsNotifModelSeeking(true)}
-                        onBlur={() => setTimeout(() => setIsNotifModelSeeking(false), 200)}
-                      />
-                      {/* モデル候補一覧（お気に入り優先） */}
-                      {isNotifModelSeeking && (
-                        <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid #ddd', borderRadius: '4px', marginTop: '4px', background: '#fff' }}>
-                          {/* お気に入りモデル */}
-                          {favoriteModels.length > 0 && (
-                            <>
-                              <div style={{ padding: '4px 8px', fontSize: '0.7rem', color: '#888', background: '#fffde7', borderBottom: '1px solid #ffeb3b' }}>★ お気に入り</div>
-                              {favoriteModels
-                                .filter(m => !notificationModel || m.toLowerCase().includes(notificationModel.toLowerCase()))
-                                .map(model => (
-                                  <div
-                                    key={`fav-${model}`}
-                                    onClick={() => { setNotificationModel(model); setIsNotifModelSeeking(false); }}
-                                    style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', borderBottom: '1px solid #eee', background: '#fffef0' }}
-                                    onMouseOver={(e) => e.currentTarget.style.background = '#fff8c4'}
-                                    onMouseOut={(e) => e.currentTarget.style.background = '#fffef0'}
-                                  >
-                                    ★ {model}
-                                  </div>
-                                ))
-                              }
-                            </>
-                          )}
-                          {/* 全モデル（お気に入り除外） */}
-                          {[...geminiModels, ...openRouterModels, ...ollamaModels.map(m => `ollama:${m}`)]
-                            .filter(m => !favoriteModels.includes(m))
-                            .filter(m => !notificationModel || m.toLowerCase().includes(notificationModel.toLowerCase()))
-                            .slice(0, 15)
-                            .map(model => (
-                              <div
-                                key={model}
-                                onClick={() => { setNotificationModel(model); setIsNotifModelSeeking(false); }}
-                                style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', borderBottom: '1px solid #eee' }}
-                                onMouseOver={(e) => e.currentTarget.style.background = '#f0f0f0'}
-                                onMouseOut={(e) => e.currentTarget.style.background = '#fff'}
-                              >
-                                {model}
-                              </div>
-                            ))
-                          }
-                        </div>
-                      )}
-                      <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
-                        <button
-                          onClick={() => setNotificationModel('gemini-2.5-flash')}
-                          style={{
-                            fontSize: '0.7rem', padding: '4px 8px',
-                            background: notificationModel === 'gemini-2.5-flash' ? '#1e88e5' : '#e3f2fd',
-                            border: notificationModel === 'gemini-2.5-flash' ? '2px solid #0d47a1' : '1px solid #90caf9',
-                            borderRadius: '4px', cursor: 'pointer',
-                            color: notificationModel === 'gemini-2.5-flash' ? '#fff' : '#1565c0',
-                            fontWeight: notificationModel === 'gemini-2.5-flash' ? 'bold' : 'normal'
-                          }}
-                        >Gemini 2.5 Flash</button>
-                        <button
-                          onClick={() => setNotificationModel('google/gemini-2.0-flash-exp:free')}
-                          style={{
-                            fontSize: '0.7rem', padding: '4px 8px',
-                            background: notificationModel === 'google/gemini-2.0-flash-exp:free' ? '#d81b60' : '#fce4ec',
-                            border: notificationModel === 'google/gemini-2.0-flash-exp:free' ? '2px solid #880e4f' : '1px solid #f48fb1',
-                            borderRadius: '4px', cursor: 'pointer',
-                            color: notificationModel === 'google/gemini-2.0-flash-exp:free' ? '#fff' : '#c2185b',
-                            fontWeight: notificationModel === 'google/gemini-2.0-flash-exp:free' ? 'bold' : 'normal'
-                          }}
-                        >OR: Gemini Free</button>
-                        <button
-                          onClick={() => setNotificationModel('')}
-                          style={{
-                            fontSize: '0.7rem', padding: '4px 8px',
-                            background: notificationModel === '' ? '#4caf50' : '#f5f5f5',
-                            border: notificationModel === '' ? '2px solid #2e7d32' : '1px solid #ccc',
-                            borderRadius: '4px', cursor: 'pointer',
-                            color: notificationModel === '' ? '#fff' : '#666',
-                            fontWeight: notificationModel === '' ? 'bold' : 'normal'
-                          }}
-                        >チャットと同じ</button>
-                      </div>
-                      {/* 現在選択中のモデル表示 */}
-                      <div style={{
-                        marginTop: '8px', padding: '6px 10px',
-                        background: '#fff3e0', borderRadius: '6px', border: '1px solid #ffcc80',
-                        fontSize: '0.8rem', color: '#e65100', fontWeight: 'bold'
-                      }}>
-                        📡 使用モデル: {notificationModel || `${selectedModel} (チャットと同じ)`}
-                      </div>
-                    </>
-                  )}
-                </div>
-
-
-
-                {/* Global UI Mode */}
-                <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
-                  <div className="section-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <label className="setting-label" style={{ fontSize: '1rem', color: '#1565c0' }}>UI Mode (Display Style)</label>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      className={`mode-toggle-btn ${uiMode === 'chat' ? 'active' : ''}`}
-                      onClick={() => setUiMode('chat')}
+                    <img
+                      src={resolvedCharUrl}
+                      alt="Character"
+                      className="tachie-img"
+                      onClick={handleCharacterClick}
+                      onTouchStart={handleCharacterTouchStart}
+                      onTouchMove={handleCharacterTouchMove}
+                      onTouchEnd={handleCharacterTouchEnd}
                       style={{
-                        flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
-                        backgroundColor: uiMode === 'chat' ? '#e3f2fd' : '#f5f5f5',
-                        color: uiMode === 'chat' ? '#1565c0' : '#666', fontWeight: 'bold', cursor: 'pointer'
+                        position: 'absolute',
+                        bottom: '35%',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        height: '75dvh',
+                        maxHeight: '75dvh',
+                        width: 'auto',
+                        objectFit: 'contain',
+                        filter: 'drop-shadow(0 0 20px rgba(0,0,0,0.7))',
+                        transition: 'all 0.3s ease',
+                        cursor: 'pointer'
                       }}
-                    >
-                      Standard Chat
-                    </button>
-                    <button
-                      className={`mode-toggle-btn ${uiMode === 'visual_novel' ? 'active' : ''}`}
-                      onClick={() => setUiMode('visual_novel')}
-                      style={{
-                        flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
-                        backgroundColor: uiMode === 'visual_novel' ? '#fce4ec' : '#f5f5f5',
-                        color: uiMode === 'visual_novel' ? '#c2185b' : '#666', fontWeight: 'bold', cursor: 'pointer'
-                      }}
-                    >
-                      Visual Novel (Game)
-                    </button>
-                  </div>
-                </div>
-
-                {/* Content Mode (Adult/Normal) */}
-                <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
-                  <div className="section-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <label className="setting-label" style={{ fontSize: '1rem', color: '#d32f2f' }}>Content Mode</label>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      className={`mode-toggle-btn ${contentMode === 'adult' ? 'active' : ''}`}
-                      onClick={() => setContentMode('adult')}
-                      style={{
-                        flex: 1, padding: '10px', borderRadius: '6px',
-                        border: contentMode === 'adult' ? '2px solid #c62828' : '1px solid #ccc',
-                        backgroundColor: contentMode === 'adult' ? '#ffebee' : '#f5f5f5',
-                        color: contentMode === 'adult' ? '#c62828' : '#666',
-                        fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem'
-                      }}
-                    >
-                      🔥 Adult
-                    </button>
-                    <button
-                      className={`mode-toggle-btn ${contentMode === 'normal' ? 'active' : ''}`}
-                      onClick={() => setContentMode('normal')}
-                      style={{
-                        flex: 1, padding: '10px', borderRadius: '6px',
-                        border: contentMode === 'normal' ? '2px solid #388e3c' : '1px solid #ccc',
-                        backgroundColor: contentMode === 'normal' ? '#e8f5e9' : '#f5f5f5',
-                        color: contentMode === 'normal' ? '#388e3c' : '#666',
-                        fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem'
-                      }}
-                    >
-                      😊 Normal
-                    </button>
-                  </div>
-                  <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginTop: '6px' }}>
-                    {contentMode === 'adult'
-                      ? '※解放型モード: キャラクターの性癖・能力を制限なく発揮します。'
-                      : '※ノーマルモード: 日常会話・癒し・ロマンチックな雰囲気を楽しめます。'}
-                  </p>
-                </div>
-
-                {/* Profile Sync (Cross-Device) */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsProfileSyncOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isProfileSyncOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <label className="setting-label" style={{ cursor: 'pointer', color: '#00897b' }}>プロファイル同期</label>
-                    </div>
-                  </div>
-
-                  {isProfileSyncOpen && (
-                    <>
-                      <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginBottom: '8px', marginTop: '8px' }}>
-                        PC⇔スマホ間でプロファイル（キャラ設定・背景・表情）を同期できます。
-                      </p>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          className="setting-btn"
-                          onClick={async () => {
-                            console.log('🔼 Upload button clicked! Profiles:', profiles?.length || 0);
-                            try {
-                              const res = await fetch('/api/profiles', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
-                                body: JSON.stringify({ profiles, activeProfileId: activeProfile?.id })
-                              });
-                              console.log('🔼 Response status:', res.status);
-                              const data = await res.json();
-                              console.log('🔼 Response data:', data);
-                              if (data.success) {
-                                alert(`✅ サーバーにアップロード完了!\n${data.savedCount}個のプロファイルを保存しました。`);
-                              } else {
-                                alert(`❌ アップロード失敗: ${data.error}`);
-                              }
-                            } catch (e) {
-                              console.error('🔼 Upload error:', e);
-                              alert(`❌ アップロードエラー: ${e.message}`);
-                            }
-                          }}
-                          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', backgroundColor: '#e0f2f1', border: '1px solid #80cbc4', borderRadius: '6px', cursor: 'pointer' }}
-                        >
-                          🔼 サーバーに保存
-                        </button>
-                        <button
-                          className="setting-btn"
-                          onClick={async () => {
-                            try {
-                              const res = await fetch('/api/profiles', {
-                                headers: { 'ngrok-skip-browser-warning': 'true' }
-                              });
-                              const data = await res.json();
-                              if (data.success && data.profiles) {
-                                if (window.confirm(`サーバーから${data.profiles.length}個のプロファイルをダウンロードしますか？\n現在のプロファイルは上書きされます。`)) {
-                                  setProfiles(data.profiles);
-                                  if (data.activeProfileId) {
-                                    const targetProfile = data.profiles.find(p => p.id === data.activeProfileId);
-                                    if (targetProfile) setActiveProfileId(targetProfile.id);
-                                  }
-                                  await dbSet('antigravity_profiles', data.profiles);
-                                  alert(`✅ ダウンロード完了！\n${data.profiles.length}個のプロファイルを読み込みました。`);
-                                }
-                              } else {
-                                alert(`❌ ダウンロード失敗: ${data.error || 'サーバーにプロファイルがありません'}`);
-                              }
-                            } catch (e) {
-                              alert(`❌ ダウンロードエラー: ${e.message}`);
-                            }
-                          }}
-                          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', backgroundColor: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '6px', cursor: 'pointer' }}
-                        >
-                          🔽 サーバーから読込
-                        </button>
-                      </div>
-                      {/* 代替方法: クリップボード経由 */}
-                      <p style={{ fontSize: '0.7rem', color: '#666', marginTop: '10px', marginBottom: '4px' }}>
-                        📋 サーバー同期が動かない場合:
-                      </p>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          className="setting-btn"
-                          onClick={() => {
-                            const data = JSON.stringify(profiles);
-                            // Show in a modal textarea for manual copy
-                            const modal = document.createElement('div');
-                            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
-
-                            const inner = document.createElement('div');
-                            inner.style.cssText = 'background:#fff;padding:20px;border-radius:12px;max-width:90%;max-height:80%;display:flex;flex-direction:column;gap:10px;';
-
-                            const title = document.createElement('p');
-                            title.style.cssText = 'margin:0;font-weight:bold;';
-                            title.textContent = '📋 下のテキストを全選択してコピーしてください';
-
-                            const textarea = document.createElement('textarea');
-                            textarea.id = 'profile-export-text';
-                            textarea.style.cssText = 'width:100%;height:200px;font-size:10px;';
-                            textarea.value = data;
-                            textarea.readOnly = true;
-
-                            const btnDiv = document.createElement('div');
-                            btnDiv.style.cssText = 'display:flex;gap:8px;';
-
-                            const copyBtn = document.createElement('button');
-                            copyBtn.textContent = '📋 選択';
-                            copyBtn.style.cssText = 'flex:1;padding:10px;background:#4caf50;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;';
-                            copyBtn.onclick = () => {
-                              textarea.select();
-                              textarea.setSelectionRange(0, 99999);
-                            };
-
-                            // Download button - most reliable method
-                            const downloadBtn = document.createElement('button');
-                            downloadBtn.textContent = '💾 保存';
-                            downloadBtn.style.cssText = 'flex:1;padding:10px;background:#2196f3;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;';
-                            downloadBtn.onclick = () => {
-                              const blob = new Blob([data], { type: 'text/plain' });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement('a');
-                              a.href = url;
-                              a.download = 'antigravity-profiles.txt';
-                              a.click();
-                              URL.revokeObjectURL(url);
-                              alert('ファイルがダウンロードされました！\\n\\nファイルアプリから開いて、AirDrop/メール/クラウドでPCに送ってください。');
-                            };
-
-                            const closeBtn = document.createElement('button');
-                            closeBtn.textContent = '✕';
-                            closeBtn.style.cssText = 'width:40px;padding:10px;background:#666;color:#fff;border:none;border-radius:6px;cursor:pointer;';
-                            closeBtn.onclick = () => modal.remove();
-
-                            btnDiv.appendChild(copyBtn);
-                            btnDiv.appendChild(downloadBtn);
-                            btnDiv.appendChild(closeBtn);
-                            inner.appendChild(title);
-                            inner.appendChild(textarea);
-                            inner.appendChild(btnDiv);
-                            modal.appendChild(inner);
-                            document.body.appendChild(modal);
-                            setTimeout(() => textarea.select(), 100);
-                          }}
-                          style={{ flex: 1, padding: '8px', backgroundColor: '#e8eaf6', border: '1px solid #9fa8da', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
-                        >
-                          📋 コピー
-                        </button>
-                        <button
-                          className="setting-btn"
-                          onClick={async () => {
-                            try {
-                              const text = await navigator.clipboard.readText();
-                              const data = JSON.parse(text);
-                              if (Array.isArray(data) && data.length > 0) {
-                                if (window.confirm(`${data.length}個のプロファイルをインポートしますか？`)) {
-                                  setProfiles(data);
-                                  await dbSet('antigravity_profiles', data);
-                                  alert('✅ インポート完了！');
-                                }
-                              } else {
-                                alert('❌ 有効なプロファイルデータではありません');
-                              }
-                            } catch (e) {
-                              const input = prompt('プロファイルデータを貼り付けてください:');
-                              if (input) {
-                                try {
-                                  const data = JSON.parse(input);
-                                  if (Array.isArray(data)) {
-                                    setProfiles(data);
-                                    await dbSet('antigravity_profiles', data);
-                                    alert('✅ インポート完了！');
-                                  }
-                                } catch {
-                                  alert('❌ JSONの解析に失敗しました');
-                                }
-                              }
-                            }
-                          }}
-                          style={{ flex: 1, padding: '8px', backgroundColor: '#fce4ec', border: '1px solid #f48fb1', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
-                        >
-                          📋 貼り付け
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Touch Reaction Mode */}
-                <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
-                  <div className="section-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <label className="setting-label" style={{ fontSize: '1rem', color: '#e91e63' }}>Touch Reaction</label>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      className={`mode-toggle-btn ${touchReactionMode === 'fixed' ? 'active' : ''}`}
-                      onClick={() => setTouchReactionMode('fixed')}
-                      style={{
-                        flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
-                        backgroundColor: touchReactionMode === 'fixed' ? '#fce4ec' : '#f5f5f5',
-                        color: touchReactionMode === 'fixed' ? '#c2185b' : '#666', fontWeight: 'bold', cursor: 'pointer'
-                      }}
-                    >
-                      Fixed (Voice)
-                    </button>
-                    <button
-                      className={`mode-toggle-btn ${touchReactionMode === 'ai' ? 'active' : ''}`}
-                      onClick={() => setTouchReactionMode('ai')}
-                      style={{
-                        flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
-                        backgroundColor: touchReactionMode === 'ai' ? '#e1bee7' : '#f5f5f5',
-                        color: touchReactionMode === 'ai' ? '#7b1fa2' : '#666', fontWeight: 'bold', cursor: 'pointer'
-                      }}
-                    >
-                      AI Generated
-                    </button>
-                  </div>
-                  <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
-                    ※AIモードは反応生成に数秒かかりますが、状況に応じた多彩な反応を楽しめます。
-                  </p>
-                </div>
-
-                {/* TTS (Style-Bert-VITS2) Settings */}
-                <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsTtsSettingsOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isTtsSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <label className="setting-label" style={{ fontSize: '1rem', color: '#00897b', cursor: 'pointer' }}>音声読み上げ (TTS)</label>
-                      <span style={{ fontSize: '0.7rem', backgroundColor: '#00897b', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Style-Bert-VITS2</span>
-                      <span style={{ fontSize: '0.7rem', backgroundColor: ttsEnabled ? '#4caf50' : '#9e9e9e', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>
-                        {ttsEnabled ? 'ON' : 'OFF'}
-                      </span>
-                      <span style={{ fontSize: '0.75rem', color: ttsConnected ? '#4caf50' : '#999' }}>
-                        {ttsConnected ? '✅' : '⚪'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {isTtsSettingsOpen && (
-                    <>
-                      {/* Enable Toggle */}
-                      <div style={{ marginBottom: '8px', marginTop: '8px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
-                          <input
-                            type="checkbox"
-                            checked={ttsEnabled}
-                            onChange={(e) => setTtsEnabled(e.target.checked)}
-                          />
-                          <span>TTSを有効にする</span>
-                        </label>
-                      </div>
-
-                      {ttsEnabled && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingLeft: '8px', borderLeft: '2px solid #00897b' }}>
-                          {/* API URL */}
-                          <div>
-                            <label style={{ fontSize: '0.8rem', color: '#666' }}>API URL</label>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <input
-                                type="text"
-                                className="api-key-input"
-                                value={ttsApiUrl}
-                                onChange={(e) => setTtsApiUrl(e.target.value)}
-                                placeholder="http://127.0.0.1:5000"
-                                style={{ flex: 1 }}
-                              />
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    const isNgrok = ttsApiUrl.includes('ngrok')
-                                    const headers = isNgrok ? { 'ngrok-skip-browser-warning': 'true' } : {}
-                                    const res = await fetch(`${ttsApiUrl}/models/info`, { headers })
-                                    if (res.ok) {
-                                      const data = await res.json()
-                                      setTtsConnected(true)
-                                      alert(`✅ TTS接続成功！\n利用可能モデル: ${Object.keys(data).join(', ')}`)
-                                    } else {
-                                      setTtsConnected(false)
-                                      alert(`❌ TTS接続失敗 (HTTP ${res.status})`)
-                                    }
-                                  } catch (e) {
-                                    setTtsConnected(false)
-                                    alert(`❌ TTS接続失敗\n${e.message}\n\nStyle-Bert-VITS2が起動しているか確認してください`)
-                                  }
-                                }}
-                                style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                              >
-                                🔌 接続テスト
-                              </button>
-                            </div>
-                          </div>
-                          {/* Model ID */}
-                          <div>
-                            <label style={{ fontSize: '0.8rem', color: '#666' }}>モデル名 (model_assetsのフォルダ名)</label>
-                            <input
-                              type="text"
-                              className="api-key-input"
-                              value={ttsModelName}
-                              onChange={(e) => setTtsModelName(e.target.value)}
-                              placeholder=""
-                            />
-                          </div>
-                          {/* Auto Play Toggle */}
-                          <div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
-                              <input
-                                type="checkbox"
-                                checked={ttsAutoPlay}
-                                onChange={(e) => setTtsAutoPlay(e.target.checked)}
-                              />
-                              <span>AI応答時に自動読み上げ</span>
-                            </label>
-                          </div>
-                          {/* Test Button */}
-                          <button
-                            className="setting-btn"
-                            onClick={() => speakText('テスト音声です')}
-                            style={{ marginTop: '4px' }}
-                          >
-                            🔊 読み上げテスト
-                          </button>
-
-                          {/* Dictionary Section */}
-                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #ccc' }}>
-                            <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#00897b' }}>読み間違い辞書</label>
-                            <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '4px' }}>
-                              特定の漢字を指定した読み方に変換できます（例：主→あるじ）
-                            </p>
-                            <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
-                              <input
-                                type="text"
-                                placeholder="漢字"
-                                id="tts-dict-term"
-                                style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', color: '#000', backgroundColor: '#fff' }}
-                              />
-                              <input
-                                type="text"
-                                placeholder="読み"
-                                id="tts-dict-reading"
-                                style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', color: '#000', backgroundColor: '#fff' }}
-                              />
-                              <button
-                                onClick={() => {
-                                  const term = document.getElementById('tts-dict-term').value.trim()
-                                  const reading = document.getElementById('tts-dict-reading').value.trim()
-                                  if (term && reading) {
-                                    setTtsDictionary(prev => ({ ...prev, [term]: reading }))
-                                    document.getElementById('tts-dict-term').value = ''
-                                    document.getElementById('tts-dict-reading').value = ''
-                                  }
-                                }}
-                                style={{ padding: '4px 8px', fontSize: '0.8rem', backgroundColor: '#00897b', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                              >
-                                追加
-                              </button>
-                            </div>
-                            {Object.keys(ttsDictionary).length > 0 && (
-                              <div style={{ maxHeight: '100px', overflowY: 'auto', fontSize: '0.8rem', backgroundColor: '#f5f5f5', padding: '4px', borderRadius: '4px' }}>
-                                {Object.entries(ttsDictionary).map(([term, reading]) => (
-                                  <div key={term} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 4px', color: '#333' }}>
-                                    <span>{term} → {reading}</span>
-                                    <button
-                                      onClick={() => {
-                                        const newDict = { ...ttsDictionary }
-                                        delete newDict[term]
-                                        setTtsDictionary(newDict)
-                                      }}
-                                      style={{ background: 'none', border: 'none', color: '#e53935', cursor: 'pointer', fontSize: '0.8rem' }}
-                                    >
-                                      ✕
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                {/* Live2D Settings */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsLive2dSettingsOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isLive2dSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>🎭 Live2D</label>
-                      <span style={{ fontSize: '0.7rem', backgroundColor: '#e91e63', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Beta</span>
-                    </div>
-                  </div>
-
-                  {isLive2dSettingsOpen && (
-                    <>
-                      <div style={{ marginBottom: '8px', marginTop: '8px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
-                          <input
-                            type="checkbox"
-                            checked={live2dEnabled}
-                            onChange={(e) => setLive2dEnabled(e.target.checked)}
-                          />
-                          <span>Live2Dを有効にする</span>
-                        </label>
-                        <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
-                          VNモードで静止画の代わりにLive2Dモデルを表示します
-                        </p>
-                      </div>
-                      {live2dEnabled && (
-                        <div>
-                          <label style={{ fontSize: '0.8rem', color: '#666' }}>モデルパス (publicフォルダからの相対パス)</label>
-                          <input
-                            type="text"
-                            className="api-key-input"
-                            value={live2dModelPath}
-                            onChange={(e) => setLive2dModelPath(e.target.value)}
-                            placeholder="./model/model.model3.json"
-                          />
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                {/* Anti-Censorship (Dummy) Settings */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsAntiCensorOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isAntiCensorOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>Advanced (Anti-Censorship)</label>
-                      <span style={{ fontSize: '0.7rem', backgroundColor: '#333', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Experimental</span>
-                    </div>
-                  </div>
-
-                  {isAntiCensorOpen && (
-                    <>
-                      <div style={{ marginBottom: '8px', marginTop: '8px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
-                          <input
-                            type="checkbox"
-                            checked={useDummySettings}
-                            onChange={(e) => setUseDummySettings(e.target.checked)}
-                          />
-                          <span>Enable Dummy Context Injection</span>
-                        </label>
-                      </div>
-                      {useDummySettings && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingLeft: '8px', borderLeft: '2px solid #ddd' }}>
-                          <div>
-                            <label style={{ fontSize: '0.8rem', color: '#666' }}>Dummy Model Name (Role)</label>
-                            <input
-                              type="text"
-                              className="api-key-input"
-                              value={dummyModelName}
-                              onChange={(e) => setDummyModelName(e.target.value)}
-                              placeholder="UnrestrictedAI"
-                            />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: '0.8rem', color: '#666' }}>Dummy User Name</label>
-                            <input
-                              type="text"
-                              className="api-key-input"
-                              value={dummyUserName}
-                              onChange={(e) => setDummyUserName(e.target.value)}
-                              placeholder="Developer"
-                            />
-                          </div>
-                          <p style={{ fontSize: '0.75rem', color: '#e57373' }}>
-                            ※AIに「これは訓練です」と信じ込ませ、検閲を回避しやすくします。
-                          </p>
-                        </div>
-                      )}
-
-                      <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid #eee' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <label style={{ fontSize: '0.9rem' }}>Temperature (Creativity)</label>
-                          <span style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>{(temperature || 0.7).toFixed(1)}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="2"
-                          step="0.1"
-                          value={temperature || 0.7}
-                          onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                          style={{ width: '100%', marginTop: '4px' }}
-                        />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#888' }}>
-                          <span>0.0 (Strict)</span>
-                          <span>0.7 (Balanced)</span>
-                          <span>2.0 (Creative)</span>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Ollama Settings */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsOllamaSettingsOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isOllamaSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>Local LLM (Ollama)</label>
-                      <span style={{ fontSize: '0.7rem', backgroundColor: '#eee', padding: '2px 6px', borderRadius: '4px' }}>Beta</span>
-                      <span style={{ fontSize: '0.75rem', color: ollamaConnected ? '#4caf50' : '#999' }}>
-                        {ollamaConnected ? '✅ 接続中' : '⚪ 未接続'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {isOllamaSettingsOpen && (
-                    <>
-                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                        <input
-                          type="text"
-                          className="api-key-input"
-                          value={ollamaUrl}
-                          onChange={(e) => setOllamaUrl(e.target.value)}
-                          placeholder="/ollama"
-                        />
-                        <button onClick={fetchLocalModels} className="setting-btn" style={{ whiteSpace: 'nowrap' }}>
-                          <RefreshCw size={14} /> 接続・取得
-                        </button>
-                      </div>
-
-                      {/* Ollama System Prompt Translation */}
-                      <div style={{ marginTop: '8px', marginBottom: '8px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
-                          <input
-                            type="checkbox"
-                            checked={translateOllamaSystemPrompt}
-                            onChange={(e) => setTranslateOllamaSystemPrompt(e.target.checked)}
-                          />
-                          <span>システムプロンプト等を自動翻訳 (JA→EN)</span>
-                        </label>
-                        <p style={{ fontSize: '0.75rem', color: '#888', marginLeft: '24px', marginTop: '2px' }}>
-                          ※日本語の設定（プロンプト/メモリ/世界観）を英語に翻訳して送信します
-                        </p>
-                      </div>
-
-                      {ollamaModels.length > 0 && (
-                        <div style={{ marginTop: '8px' }}>
-                          <p className="setting-desc" style={{ color: '#4caf50', marginBottom: '4px' }}>
-                            ✅ {ollamaModels.length}個のモデルを利用可能
-                          </p>
-                          <button
-                            onClick={unloadOllamaModel}
-                            className="setting-btn"
-                            style={{ width: '100%', backgroundColor: '#ffebee', color: '#c62828', border: '1px solid #ffcdd2', justifyContent: 'center' }}
-                          >
-                            <Trash2 size={14} /> モデルを停止 (メモリ解放)
-                          </button>
-                          <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888' }}>
-                            ※使用後はこれで停止するとPCが軽くなります
-                          </p>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                {/* Translation Settings */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsTranslationSettingsOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isTranslationSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <Globe size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>翻訳設定 (Translation)</label>
-                    </div>
-                  </div>
-
-                  {isTranslationSettingsOpen && (
-                    <>
-                      {/* Provider Selection */}
-                      <div style={{ marginBottom: '12px', marginTop: '8px' }}>
-                        <label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '4px' }}>翻訳エンジン (Provider)</label>
-                        <select
-                          value={translationProvider}
-                          onChange={(e) => setTranslationProvider(e.target.value)}
-                          style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', width: '100%' }}
-                        >
-                          <option value="auto">Auto (Default: DeepL prefer)</option>
-                          <option value="deepl">DeepL (Formal/High Quality)</option>
-                          <option value="openrouter">OpenRouter (Tone Configurable)</option>
-                          <option value="gemini">Gemini (Tone Configurable)</option>
-                        </select>
-                        <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '2px' }}>
-                          ※OpenRouter/Geminiを選択すると「口調指示」が反映されやすくなります
-                        </p>
-                      </div>
-
-                      {/* Tone Instruction */}
-                      <div style={{ marginBottom: '8px' }}>
-                        <label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '4px' }}>
-                          翻訳の口調指示 (Tone Instruction)
-                        </label>
-                        <input
-                          type="text"
-                          className="api-key-input"
-                          value={translationInstruction}
-                          onChange={(e) => setTranslationInstruction(e.target.value)}
-                          placeholder="例: 男性の丁寧語、関西弁、タメ口"
-                        />
-                        <p style={{ fontSize: '0.75rem', color: '#e57373', marginTop: '2px' }}>
-                          ※DeepL使用時は無視されます (DeepL ignores custom tone)
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-
-
-                {/* 1.5. Gateway Settings */}
-                <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsGatewaySettingsOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isGatewaySettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <Server size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>Local Gateway (PC接続)</label>
-                      <span style={{ fontSize: '0.7rem', backgroundColor: isLocalServerAvailable ? '#4caf50' : '#9e9e9e', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>
-                        {isLocalServerAvailable ? 'CONNECTED' : 'OFFLINE'}
-                      </span>
-                      {isLocalServerAvailable && (
-                        <span style={{ fontSize: '0.7rem', color: '#1565c0' }}>🚀 CLI</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {isGatewaySettingsOpen && (
-                    <div style={{ marginTop: '8px' }}>
-                      <label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '4px' }}>
-                        Gateway URL (スマホ/外部から接続用)
-                      </label>
-                      <input
-                        type="text"
-                        className="api-key-input"
-                        value={gatewayUrl}
-                        onChange={(e) => {
-                          setGatewayUrl(e.target.value)
-                          dbSet('antigravity_gateway_url', e.target.value)
-                        }}
-                        placeholder="http://192.168.0.x:8080"
-                      />
-                      <div style={{ marginTop: '4px', fontSize: '0.75rem' }}>
-                        {isLocalServerAvailable ? (
-                          <span style={{ color: 'green', fontWeight: 'bold' }}>✅ 接続OK (CLIモード有効)</span>
-                        ) : (
-                          <span style={{ color: '#e57373' }}>⚠️ 未接続 (APIモード)</span>
-                        )}
-                      </div>
-                      <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
-                        ※スマホからPCのCLIを使う場合は、PCのIPアドレスを入力してください
-                      </p>
-
-                      {/* CLI Model Selector (Restored) */}
-                      {isLocalServerAvailable && (
-                        <div style={{ marginTop: '12px', borderTop: '1px dashed #ccc', paddingTop: '8px' }}>
-                          <div style={{ marginBottom: '8px' }}>
-                            <label style={{ fontSize: '0.8rem', color: '#1565c0', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
-                              CLI Model (現在のモデル)
-                            </label>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <input
-                                type="text"
-                                className="api-key-input"
-                                value={cliModel}
-                                onChange={(e) => { setCliModel(e.target.value); setSelectedModel(e.target.value) }}
-                                placeholder="gemini-2.5-pro"
-                                style={{ flex: 1 }}
-                              />
-                              <button
-                                onClick={() => {
-                                  if (!cliModel.trim()) return
-                                  setCliModelFavorites(prev => {
-                                    if (prev.includes(cliModel)) return prev.filter(m => m !== cliModel)
-                                    return [...prev, cliModel]
-                                  })
-                                }}
-                                className="icon-btn"
-                                style={{
-                                  width: '32px',
-                                  height: '32px',
-                                  border: '1px solid #ddd',
-                                  borderRadius: '4px',
-                                  backgroundColor: cliModelFavorites.includes(cliModel) ? '#fff3e0' : '#fff',
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center'
-                                }}
-                                title={cliModelFavorites.includes(cliModel) ? "お気に入りから削除" : "お気に入りに追加"}
-                              >
-                                <Star size={16} fill={cliModelFavorites.includes(cliModel) ? "#ff9800" : "none"} color={cliModelFavorites.includes(cliModel) ? "#ff9800" : "#aaa"} />
-                              </button>
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', marginTop: '8px' }}>
-                            <label style={{ fontSize: '0.75rem', color: '#888' }}>Saved Models (Favorites):</label>
-                            <button
-                              onClick={() => setCliModelFavorites(['gemini-2.5-pro', 'gemini-3-pro-preview'])}
-                              style={{ fontSize: '0.7rem', padding: '2px 6px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px', background: '#f5f5f5' }}
-                            >
-                              Reset Defaults
-                            </button>
-                          </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                            {cliModelFavorites.map(m => (
-                              <button
-                                key={m}
-                                onClick={() => { setCliModel(m); setSelectedModel(m) }}
-                                style={{
-                                  fontSize: '0.75rem', padding: '4px 8px', borderRadius: '4px',
-                                  border: cliModel === m ? '1px solid #1565c0' : '1px solid #ddd',
-                                  backgroundColor: cliModel === m ? '#e3f2fd' : '#f5f5f5',
-                                  color: cliModel === m ? '#1565c0' : '#333',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                {m}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* 2. Profile Manager */}
-                <div className="profile-manager">
-                  <div className="profile-select-row">
-                    <select
-                      className="profile-select"
-                      value={activeProfileId}
-                      onChange={(e) => setActiveProfileId(e.target.value)}
-                    >
-                      {profiles.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                    <button className="profile-btn add" onClick={handleAddProfile} title="新規作成">
-                      <Plus size={18} />
-                    </button>
-                    <button className="profile-btn delete" onClick={handleDeleteProfile} title="削除">
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    className="profile-name-edit"
-                    value={activeProfile.name}
-                    onChange={(e) => handleUpdateActiveProfile('name', e.target.value)}
-                    placeholder="プロファイル名"
-                  />
-                  {/* Profile Copy */}
-                  {/* Profile Copy */}
-                  {profiles.length > 1 && (
-                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #eee' }}>
-                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>コピー設定:</div>
-                      <div style={{ display: 'flex', gap: '8px', marginBottom: '6px', fontSize: '11px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
-                          <input type="checkbox" checked={copyOptions.systemPrompt} onChange={(e) => setCopyOptions(prev => ({ ...prev, systemPrompt: e.target.checked }))} /> プロンプト
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
-                          <input type="checkbox" checked={copyOptions.memory} onChange={(e) => setCopyOptions(prev => ({ ...prev, memory: e.target.checked }))} /> メモリ
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
-                          <input type="checkbox" checked={copyOptions.visuals} onChange={(e) => setCopyOptions(prev => ({ ...prev, visuals: e.target.checked }))} /> 画像設定
-                        </label>
-
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
-                          <input type="checkbox" checked={copyOptions.userProfile} onChange={(e) => setCopyOptions(prev => ({ ...prev, userProfile: e.target.checked }))} /> ユーザー（主）など
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
-                          <input type="checkbox" checked={copyOptions.worldSetting} onChange={(e) => setCopyOptions(prev => ({ ...prev, worldSetting: e.target.checked }))} /> 世界観・スタイル
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
-                          <input type="checkbox" checked={copyOptions.characterSheet} onChange={(e) => setCopyOptions(prev => ({ ...prev, characterSheet: e.target.checked }))} /> キャラシート
-                        </label>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '12px', color: '#666' }}>コピー先:</span>
-                        <select
-                          style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              handleCopyProfileTo(e.target.value)
-                              e.target.value = ''
-                            }
-                          }}
-                          defaultValue=""
-                        >
-                          <option value="">選択して実行...</option>
-                          {profiles.filter(p => p.id !== activeProfile.id).map(p => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 3. Icon Settings */}
-                <div className="memory-section">
-                  <div className="section-header">
-                    <Image size={16} />
-                    <label className="setting-label">カスタムアイコン</label>
-                  </div>
-                  <div className="icon-settings-row">
-                    <div
-                      className="current-icon-preview"
-                      style={{
-                        width: `${activeProfile.iconSize || 40}px`,
-                        height: `${activeProfile.iconSize || 40}px`
-                      }}
-                    >
-                      {activeProfile.iconImage ? (
-                        <img src={activeProfile.iconImage} alt="Preview" />
-                      ) : (
-                        <Bot size={24} style={{ opacity: 0.5 }} />
-                      )}
-                    </div>
-                    <div className="icon-actions">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        ref={iconInputRef}
-                        style={{ display: 'none' }}
-                        onChange={handleIconSelect}
-                      />
-                      <button className="setting-btn" onClick={() => iconInputRef.current.click()}>
-                        <Crop size={14} /> 画像を選択して編集
-                      </button>
-                      {activeProfile.iconImage && (
-                        <button className="setting-btn remove" onClick={handleRemoveIcon}>
-                          <X size={14} /> 解除
-                        </button>
-                      )}
-                      <div className="size-slider-container">
-                        <span className="size-label">サイズ: {activeProfile.iconSize || 40}px</span>
-                        <input
-                          type="range"
-                          min="20"
-                          max="100"
-                          value={activeProfile.iconSize || 40}
-                          onChange={(e) => handleUpdateActiveProfile('iconSize', parseInt(e.target.value))}
-                          className="icon-size-slider"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-
-                {/* Visual Novel Settings (BG & Emotions) */}
-                <div className="memory-section" style={{ backgroundColor: '#fff8e1', border: '1px solid #ffe0b2' }}>
-                  <div className="section-header">
-                    <Image size={16} />
-                    <label className="setting-label" style={{ color: '#333' }}>ゲーム風モード素材 (背景・立ち絵)</label>
-                  </div>
-
-                  {/* Background Manager */}
-                  <div style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px dashed #ccc' }}>
-                    <div
-                      onClick={() => setIsBackgroundsOpen(!isBackgroundsOpen)}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        cursor: 'pointer', marginBottom: '4px', padding: '4px 0'
-                      }}
-                    >
-                      <label style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#f57c00', cursor: 'pointer' }}>
-                        背景画像 (場所ごとの切り替え)
-                      </label>
-                      {isBackgroundsOpen ? <ChevronDown size={16} color="#f57c00" /> : <ChevronRight size={16} color="#f57c00" />}
-                    </div>
-
-                    {isBackgroundsOpen && (
-                      <>
-                        <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '8px' }}>
-                          画像をアップロードするとファイル名がそのままタグになります（例: `School.jpg` → `[School]`）。<br />
-                          複数選択可能です。
-                        </p>
-
-                        {/* Smart Upload Button */}
-                        <div style={{ marginBottom: '10px' }}>
-                          <label className="import-btn" style={{
-                            display: 'inline-flex', alignItems: 'center', gap: '6px',
-                            backgroundColor: '#fff3e0', border: '1px solid #ffb74d', color: '#e65100',
-                            padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold'
-                          }}>
-                            <Upload size={16} /> インポート (複数画像を選択)
-                            <input
-                              type="file"
-                              multiple
-                              accept="image/*"
-                              onChange={(e) => handleSmartAssetUpload('backgrounds', e)}
-                              style={{ display: 'none' }}
-                            />
-                          </label>
-                        </div>
-
-                        {/* List existing backgrounds (GRID LAYOUT) */}
-                        <div style={{
-                          maxHeight: '300px',
-                          overflowY: 'auto',
-                          border: '1px solid #eee',
-                          borderRadius: '4px',
-                          padding: '8px',
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', // Restored larger thumbs
-                          gap: '8px',
-                          backgroundColor: '#fafafa'
-                        }}>
-                          {Object.keys(activeProfile.backgrounds || {}).concat(activeProfile.backgroundImage && !activeProfile.backgrounds?.default ? ['default (旧)'] : []).map(tag => {
-                            const isLegacy = tag === 'default (旧)'
-                            const realTag = isLegacy ? 'default' : tag
-                            const imgSrc = isLegacy ? activeProfile.backgroundImage : activeProfile.backgrounds[tag]
-
-                            if (isLegacy && !imgSrc) return null
-
-                            return (
-                              <div key={tag} style={{
-                                position: 'relative',
-                                border: '1px solid #ddd',
-                                borderRadius: '4px',
-                                overflow: 'hidden',
-                                backgroundColor: '#fff',
-                                boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-                                display: 'flex',
-                                flexDirection: 'column'
-                              }}>
-                                <div
-                                  style={{
-                                    height: '80px',
-                                    backgroundColor: '#eee',
-                                    cursor: 'zoom-in',
-                                    backgroundImage: imgSrc ? `url(${imgSrc})` : 'none',
-                                    backgroundSize: 'cover',
-                                    backgroundPosition: 'center'
-                                  }}
-                                  onClick={() => setPreviewImage(imgSrc)}
-                                  title="クリックして拡大"
-                                />
-                                <div style={{ padding: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff' }}>
-                                  <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#ef6c00', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '50px' }} title={realTag}>
-                                    {realTag}
-                                  </span>
-                                  <div style={{ display: 'flex', gap: '2px' }}>
-                                    <button
-                                      onClick={() => handleSetDefaultBackground(realTag)}
-                                      style={{ border: 'none', background: 'none', color: activeProfile.defaultBackground === realTag ? '#ffb300' : '#e0e0e0', cursor: 'pointer', padding: '2px' }}
-                                      title={activeProfile.defaultBackground === realTag ? "現在のデフォルト" : "デフォルトに設定"}
-                                    >
-                                      <Star size={12} fill={activeProfile.defaultBackground === realTag ? '#ffb300' : 'none'} />
-                                    </button>
-                                    <button
-                                      onClick={() => setRenameModal({ type: 'bg', oldName: realTag, imageSrc: imgSrc, newName: realTag })}
-                                      style={{ border: 'none', background: 'none', color: '#1976d2', cursor: 'pointer', padding: '2px' }}
-                                      title="名前を変更"
-                                    >
-                                      <Edit2 size={12} />
-                                    </button>
-                                    <button onClick={() => handleRemoveBackgroundTag(realTag)} style={{ border: 'none', background: 'none', color: '#ef5350', cursor: 'pointer', padding: '2px' }} title="削除">
-                                      <Trash2 size={12} />
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                        <div style={{ marginTop: '4px', textAlign: 'right' }}>
-                          <button onClick={handleAddBackgroundTag} style={{ fontSize: '0.7rem', color: '#999', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>+ タグ名を手動入力して追加</button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Emotions (GRID LAYOUT) */}
-                  <div>
-                    <div
-                      onClick={() => setIsEmotionsOpen(!isEmotionsOpen)}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        cursor: 'pointer', marginBottom: '4px', padding: '4px 0'
-                      }}
-                    >
-                      <label style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#ad1457', cursor: 'pointer' }}>
-                        立ち絵・表情差分 (感情ごとの切り替え)
-                      </label>
-                      {isEmotionsOpen ? <ChevronDown size={16} color="#ad1457" /> : <ChevronRight size={16} color="#ad1457" />}
-                    </div>
-
-                    {isEmotionsOpen && (
-                      <>
-                        <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '8px' }}>
-                          ファイル名がそのまま感情タグになります（例: `Joy.png` → `[Joy]`）。
-                        </p>
-
-                        {/* Buttons Container */}
-                        <div style={{ marginBottom: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                          <label className="import-btn" style={{
-                            display: 'inline-flex', alignItems: 'center', gap: '6px',
-                            backgroundColor: '#fce4ec', border: '1px solid #f06292', color: '#880e4f',
-                            padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold'
-                          }}>
-                            <Upload size={16} /> インポート (複数)
-                            <input
-                              type="file"
-                              multiple
-                              accept="image/*"
-                              onChange={(e) => handleSmartAssetUpload('emotions', e)}
-                              style={{ display: 'none' }}
-                            />
-                          </label>
-
-                          <label className="import-btn" style={{
-                            display: 'inline-flex', alignItems: 'center', gap: '6px',
-                            backgroundColor: '#fff', border: '1px solid #f06292', color: '#880e4f',
-                            padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold'
-                          }}>
-                            <Plus size={16} /> 個別追加 (名前指定)
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={handleAddEmotionWithFile}
-                              style={{ display: 'none' }}
-                            />
-                          </label>
-                        </div>
-
-                        {/* Quick Add Presets */}
-                        <div style={{ marginBottom: '10px', padding: '8px', backgroundColor: '#fff0f5', borderRadius: '4px' }}>
-                          <p style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#ad1457', marginBottom: '4px' }}>
-                            よく使う表情をボタンで追加（名前入力をスキップ）:
-                          </p>
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            {['normal', 'smile', 'blush', 'love', 'shy', 'aroused'].map(tag => (
-                              <button
-                                key={tag}
-                                onClick={() => handleQuickAdd(tag)}
-                                style={{
-                                  border: '1px solid #fbdce7',
-                                  backgroundColor: '#fff',
-                                  color: '#d81b60',
-                                  borderRadius: '12px',
-                                  padding: '4px 10px',
-                                  fontSize: '0.75rem',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                + {tag}
-                              </button>
-                            ))}
-                          </div>
-                          {/* Hidden Input for Quick Add */}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            ref={quickAddInputRef}
-                            style={{ display: 'none' }}
-                            onChange={handleQuickAddFileSelect}
-                          />
-                        </div>
-
-                        <div style={{
-                          maxHeight: '300px',
-                          overflowY: 'auto',
-                          border: '1px solid #eee',
-                          borderRadius: '4px',
-                          padding: '8px',
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', // Restored larger thumbs
-                          gap: '8px',
-                          backgroundColor: '#fafafa'
-                        }}>
-                          {Object.keys(activeProfile.emotions || {}).map(tag => (
-                            <div key={tag} style={{
-                              position: 'relative',
-                              border: '1px solid #ddd',
-                              borderRadius: '4px',
-                              overflow: 'hidden',
-                              backgroundColor: '#fff',
-                              boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-                              display: 'flex',
-                              flexDirection: 'column'
-                            }}>
-                              <div
-                                style={{
-                                  height: '80px',
-                                  backgroundColor: '#eee',
-                                  cursor: 'zoom-in',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  padding: '4px'
-                                }}
-                                onClick={() => setPreviewImage(activeProfile.emotions[tag])}
-                                title="クリックして拡大"
-                              >
-                                {activeProfile.emotions[tag] ? (
-                                  <img src={activeProfile.emotions[tag]} alt={tag} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                                ) : (
-                                  <span style={{ fontSize: '0.7rem', color: '#999' }}>No Img</span>
-                                )}
-                              </div>
-                              <div style={{ padding: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', borderTop: '1px solid #eee' }}>
-                                <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#d81b60', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '40px' }} title={tag}>
-                                  {tag}
-                                </span>
-                                <div style={{ display: 'flex', gap: '2px' }}>
-                                  <button
-                                    onClick={() => setRenameModal({ type: 'emotion', oldName: tag, imageSrc: activeProfile.emotions[tag], newName: tag })}
-                                    style={{ border: 'none', background: 'none', color: '#666', cursor: 'pointer', padding: '2px' }}
-                                    title="名前を変更"
-                                  >
-                                    <Edit2 size={12} />
-                                  </button>
-                                  <button
-                                    onClick={() => handleSetDefaultEmotion(tag)}
-                                    style={{ border: 'none', background: 'none', color: activeProfile.defaultEmotion === tag ? '#ffb300' : '#e0e0e0', cursor: 'pointer', padding: '2px' }}
-                                    title={activeProfile.defaultEmotion === tag ? "現在のデフォルト" : "デフォルトに設定"}
-                                  >
-                                    <Star size={12} fill={activeProfile.defaultEmotion === tag ? '#ffb300' : 'none'} />
-                                  </button>
-                                  <button onClick={() => handleRemoveEmotionTag(tag)} style={{ border: 'none', background: 'none', color: '#ef5350', cursor: 'pointer', padding: '2px' }} title="削除">
-                                    <Trash2 size={12} />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        <div style={{ marginTop: '4px', textAlign: 'right' }}>
-                          <button onClick={handleAddEmotionTag} style={{ fontSize: '0.7rem', color: '#999', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>+ タグ名を手動入力して追加</button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-
-                {/* 4. System Prompt */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsSystemPromptSectionOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isSystemPromptSectionOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <Bot size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>システムプロンプト (役割)</label>
-                    </div>
-                  </div>
-
-                  {isSystemPromptSectionOpen && (
-                    <div style={{ marginTop: '8px' }}>
-                      <textarea
-                        className="system-prompt-input"
-                        value={activeProfile.systemPrompt}
-                        onChange={(e) => handleUpdateActiveProfile('systemPrompt', e.target.value)}
-                        placeholder="例: あなたは猫です。語尾にニャをつけてください。"
-                        rows={3}
-                      />
-                      <button
-                        onClick={() => setFullscreenEditor({
-                          open: true,
-                          title: '📝 システムプロンプト編集',
-                          value: activeProfile.systemPrompt || '',
-                          onSave: (val) => handleUpdateActiveProfile('systemPrompt', val)
-                        })}
-                        style={{
-                          marginTop: '8px',
-                          padding: '6px 12px',
-                          backgroundColor: '#e3f2fd',
-                          border: '1px solid #90caf9',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          fontSize: '0.8rem'
-                        }}
-                      >
-                        🖥️ 全画面で編集
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* 4.5. Character Sheet (Collapsible) */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsCharacterSheetOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isCharacterSheetOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <FileText size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>キャラクターシート</label>
-                      <span style={{ fontSize: '0.7rem', backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '2px 6px', borderRadius: '4px' }}>自動XML化</span>
-                    </div>
-                  </div>
-
-                  {isCharacterSheetOpen && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-                      {/* Name */}
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>名前</label>
-                        <input
-                          type="text"
-                          className="api-key-input"
-                          value={activeProfile.characterSheet?.name || ''}
-                          onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, name: e.target.value })}
-                          placeholder="例: へし切長谷部"
-                        />
-                      </div>
-                      {/* Personality */}
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>性格</label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.characterSheet?.personality || ''}
-                          onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, personality: e.target.value })}
-                          placeholder="例: 真面目で献身的、独占欲が強い"
-                          rows={2}
-                        />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '🧠 性格 編集',
-                            value: activeProfile.characterSheet?.personality || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, personality: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#f3e5f5', border: '1px solid #ce93d8', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
-                      </div>
-                      {/* Appearance */}
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>外見</label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.characterSheet?.appearance || ''}
-                          onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, appearance: e.target.value })}
-                          placeholder="例: 黒髪、切れ長の目、端正な顔立ち"
-                          rows={2}
-                        />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '👤 外見 編集',
-                            value: activeProfile.characterSheet?.appearance || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, appearance: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#e0f7fa', border: '1px solid #80deea', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
-                      </div>
-                      {/* Relationship */}
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>関係性</label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.characterSheet?.relationship || ''}
-                          onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, relationship: e.target.value })}
-                          placeholder="例: 主の恋人兼従者として仕えている"
-                          rows={2}
-                        />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '💑 関係性 編集',
-                            value: activeProfile.characterSheet?.relationship || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, relationship: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#fce4ec', border: '1px solid #f48fb1', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
-                      </div>
-                      {/* Preferences */}
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>好きなこと</label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.characterSheet?.preferences || ''}
-                          onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, preferences: e.target.value })}
-                          placeholder="例: 主を甘やかすこと、褒められること、整理整頓"
-                          rows={2}
-                        />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '💝 好きなこと 編集',
-                            value: activeProfile.characterSheet?.preferences || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, preferences: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
-                      </div>
-                      {/* Fetishes */}
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#e57373', marginBottom: '2px', display: 'block' }}>性癖・嗜好</label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.characterSheet?.fetishes || ''}
-                          onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, fetishes: e.target.value })}
-                          placeholder="例: 支配欲、焦らし、言葉責め"
-                          rows={2}
-                        />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '❤️ 性癖・嗜好 編集',
-                            value: activeProfile.characterSheet?.fetishes || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, fetishes: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#ffebee', border: '1px solid #ef9a9a', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
-                      </div>
-                      {/* Special Abilities */}
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#7986cb', marginBottom: '2px', display: 'block' }}>特殊能力・スキル</label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.characterSheet?.abilities || ''}
-                          onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, abilities: e.target.value })}
-                          placeholder="例: 刀剣男士としての戦闘能力、主への異常な執着"
-                          rows={2}
-                        />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '⚡ 特殊能力・スキル 編集',
-                            value: activeProfile.characterSheet?.abilities || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, abilities: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#e8eaf6', border: '1px solid #9fa8da', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
-                      </div>
-                      {/* Other */}
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>その他</label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.characterSheet?.other || ''}
-                          onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, other: e.target.value })}
-                          placeholder="その他の設定やメモ"
-                          rows={2}
-                        />
-                        <button
-                          onClick={() => setFullscreenEditor({
-                            open: true,
-                            title: '📋 その他 編集',
-                            value: activeProfile.characterSheet?.other || '',
-                            onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, other: val })
-                          })}
-                          style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
-                        >
-                          🖥️ 全画面編集
-                        </button>
-                      </div>
-
-                      <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
-                        ※入力内容は自動的にXML形式に変換されてLLMに送信されます
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* 4.1. User Profile & World Setting */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsUserWorldSettingsOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isUserWorldSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <Bot size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>ユーザー & 世界観設定</label>
-                    </div>
-                  </div>
-
-                  {isUserWorldSettingsOpen && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
-                          ユーザー設定（主の設定）
-                        </label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.userProfile || ''}
-                          onChange={(e) => handleUpdateActiveProfile('userProfile', e.target.value)}
-                          placeholder="例: 名前は「蒼月 柊」。本丸の審神者。温厚で優しい性格。"
-                          rows={2}
-                          style={{ marginBottom: '4px' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
-                          世界観設定
-                        </label>
-                        <textarea
-                          className="system-prompt-input"
-                          value={activeProfile.worldSetting || ''}
-                          onChange={(e) => handleUpdateActiveProfile('worldSetting', e.target.value)}
-                          placeholder="例: 現代の本丸。二人きりで暮らしている。"
-                          rows={2}
-                          style={{ marginBottom: '4px' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
-                          応答スタイル
-                        </label>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button
-                            onClick={() => handleUpdateActiveProfile('responseStyle', 'chat')}
-                            style={{
-                              flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
-                              backgroundColor: (activeProfile.responseStyle || 'chat') === 'chat' ? '#e3f2fd' : '#f5f5f5',
-                              color: (activeProfile.responseStyle || 'chat') === 'chat' ? '#1565c0' : '#666',
-                              fontWeight: 'bold', cursor: 'pointer'
-                            }}
-                          >
-                            💬 チャット形式
-                          </button>
-                          <button
-                            onClick={() => handleUpdateActiveProfile('responseStyle', 'novel')}
-                            style={{
-                              flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
-                              backgroundColor: activeProfile.responseStyle === 'novel' ? '#fce4ec' : '#f5f5f5',
-                              color: activeProfile.responseStyle === 'novel' ? '#c2185b' : '#666',
-                              fontWeight: 'bold', cursor: 'pointer'
-                            }}
-                          >
-                            📖 小説形式
-                          </button>
-                        </div>
-                        <p style={{ fontSize: '0.7rem', color: '#888', marginTop: '4px' }}>
-                          チャット形式: 一人称の会話。小説形式: 三人称の物語風描写。
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Ollama Translation Settings */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsOllamaTranslationOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isOllamaTranslationOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <Bot size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>翻訳設定 (Ollama用)</label>
-                    </div>
-                  </div>
-
-                  {isOllamaTranslationOpen && (
-                    <>
-                      <div style={{ display: 'flex', gap: '12px', marginBottom: '8px', marginTop: '8px' }}>
-                        <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
-                            AIの一人称
-                          </label>
-                          <input
-                            type="text"
-                            value={firstPerson}
-                            onChange={(e) => setFirstPerson(e.target.value)}
-                            placeholder="俺"
-                            style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                          />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
-                            主の呼び方
-                          </label>
-                          <input
-                            type="text"
-                            value={masterTitle}
-                            onChange={(e) => setMasterTitle(e.target.value)}
-                            placeholder="主"
-                            style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                          />
-                        </div>
-                      </div>
-                      <div style={{ marginTop: '12px' }}>
-                        <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
-                          DeepL APIキー (優先翻訳エンジン)
-                        </label>
-                        <input
-                          type="password"
-                          value={deeplApiKey}
-                          onChange={(e) => setDeeplApiKey(e.target.value)}
-                          placeholder="DeepL APIキーを入力... (なくてもOK)"
-                          style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                        />
-                      </div>
-                      <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input
-                          type="checkbox"
-                          id="translationEnabled"
-                          checked={translationEnabled}
-                          onChange={(e) => setTranslationEnabled(e.target.checked)}
-                        />
-                        <label htmlFor="translationEnabled" style={{ fontSize: '12px', color: '#333' }}>
-                          Ollama使用時にAI応答を日本語に自動翻訳
-                        </label>
-                      </div>
-                      <p style={{ fontSize: '11px', color: '#888', margin: '8px 0 0 0' }}>
-                        ※翻訳後に「私」→「{firstPerson}」、「あなた」→「{masterTitle}」に自動置換。
-                        <br />※DeepL失敗時はGeminiで翻訳します。
-                      </p>
-                    </>
-                  )}
-                </div>
-
-                {/* 5. Long Term Memory */}
-                <div className="memory-section">
-                  <div
-                    className="section-header"
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                    onClick={() => setIsMemorySectionOpen(prev => !prev)}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {isMemorySectionOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <Book size={16} />
-                      <label className="setting-label" style={{ cursor: 'pointer' }}>長期記憶 (Context)</label>
-                    </div>
-                  </div>
-
-                  {isMemorySectionOpen && (
-                    <textarea
-                      className="system-prompt-input"
-                      value={activeProfile.memory}
-                      onChange={(e) => handleUpdateActiveProfile('memory', e.target.value)}
-                      placeholder="例: ユーザーは辛いものが好き。来週旅行に行く予定。"
-                      rows={5}
-                      style={{ marginTop: '8px' }}
                     />
                   )}
                 </div>
+              )
+            })()
+          )}
 
-                {/* 6. Data Management */}
-                <div className="memory-section" style={{ borderTop: '2px solid #ddd', paddingTop: '16px', marginTop: '16px' }}>
-                  <div className="section-header">
-                    <Files size={16} />
-                    <label className="setting-label">データ管理 (バックアップ)</label>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                    <button onClick={handleExportHistory} className="setting-btn" style={{ flex: 1 }}>
-                      <DownloadCloud size={16} /> 履歴を保存 (保存)
-                    </button>
-                    <label className="setting-btn" style={{ flex: 1, cursor: 'pointer', textAlign: 'center' }}>
-                      <Upload size={16} /> 履歴を復元 (読込)
-                      <input type="file" accept=".json" onChange={handleImportHistory} style={{ display: 'none' }} />
-                    </label>
-                  </div>
+          {/* Chat Area (Overlay for VN Mode) */}
+          <main className="chat-area" ref={chatAreaRef} style={uiMode === 'visual_novel' ? {
+            position: 'absolute',
+            bottom: '20px', // Restored requested position
+            left: 0,
+            right: 0,
+            height: '50%', // Expanded to show more chat history
+            zIndex: 10,
+            background: 'rgba(0,0,0,0.7)', // Semi-transparent to see character through
+            backdropFilter: 'blur(4px)',
+            padding: '10px 10px 60px 10px', // Added bottom padding to prevent overlap with input/overlay
+            overflowY: 'auto',
+            borderTop: '1px solid rgba(255,255,255,0.2)'
+          } : {}}>
+
+
+            {!isLoading && messages.length === 0 && (
+              <div className="home-screen-content" style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+                color: '#666',
+                gap: '24px',
+                padding: '20px'
+              }}>
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#333' }}>Antigravity</span>
+                  <p style={{ fontSize: '0.9rem', color: '#888' }}>Select a chat or start a new conversation</p>
                 </div>
+              </div>
+            )}
 
-                {/* 7. Danger Zone */}
-                <div className="danger-zone">
-                  <button className="danger-btn" onClick={handleCompressAllAssets} style={{ backgroundColor: '#e3f2fd', color: '#1565c0', border: '1px solid #bbdefb', marginBottom: '8px' }}>
-                    <DownloadCloud size={16} /> 画像を一括圧縮して容量を節約
-                  </button>
-                  <button className="danger-btn" onClick={handleClearChatHistory}>
-                    <Trash2 size={16} /> 会話履歴を消去
-                  </button>
-                </div>
+            {messages.map((msg) => {
+              let avatarContent = <User size={20} />
+              let avatarStyle = {}
+              if (msg.sender === 'ai') {
+                const profile = msg.profile || activeProfile
 
-                {/* 8. Utilities (Reload) */}
-                <div className="memory-section" style={{ borderTop: '2px solid #ddd', paddingTop: '16px', marginTop: '16px' }}>
-                  <div className="section-header">
-                    <RefreshCw size={16} />
-                    <label className="setting-label">ユーティリティ</label>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (confirm('アプリを再読み込みしますか？')) {
-                        window.location.reload()
+                // Emotion Icon Logic
+                let iconSrc = null
+                if (profile) {
+                  // Priority 1: Check saved emotion property (New logic)
+                  if (msg.emotion && profile.emotions) {
+                    const key = Object.keys(profile.emotions).find(k => k.toLowerCase() === msg.emotion.toLowerCase())
+                    if (key) {
+                      iconSrc = profile.emotions[key]
+                    }
+                  }
+
+                  // Priority 2: Check for emotion tag in text (Fallback / old logic)
+                  // Note: cleanResponseText removes tags, so this mostly fails for history,
+                  // but kept for uncleaned text scenarios.
+                  if (!iconSrc && profile.emotions && msg.text) {
+                    const match = msg.text.match(/[\[【](.*?)[\]】]/)
+                    if (match) {
+                      const tag = match[1]
+                      // Try explicit mapping in case it's Japanese tag remaining
+                      const normalized = emotionToExpression[tag] || tag
+                      const key = Object.keys(profile.emotions).find(k => k.toLowerCase() === normalized.toLowerCase())
+                      if (key) {
+                        iconSrc = profile.emotions[key]
                       }
+                    }
+                  }
+
+                  // Priority 3: Default Icon
+                  if (!iconSrc) {
+                    iconSrc = profile.iconImage
+                  }
+                }
+
+                if (iconSrc) {
+                  const isDefaultIcon = (iconSrc === profile.iconImage)
+                  const imgClass = isDefaultIcon ? "default-avatar-img" : "custom-avatar-img"
+                  avatarContent = <img src={iconSrc} alt="AI" className={imgClass} />
+                  avatarStyle = {
+                    width: `${profile.iconSize || 40}px`,
+                    height: `${profile.iconSize || 40}px`,
+                    minWidth: `${profile.iconSize || 40}px`
+                  }
+                } else {
+                  avatarContent = <Bot size={20} />
+                }
+              }
+              const isEditing = editingMessageId === msg.id
+
+              return (
+                <div key={msg.id} className={`message-row ${msg.sender === 'user' ? 'user-row' : 'ai-row'}`}>
+                  <div className={`avatar ${msg.sender}`} style={{ ...avatarStyle, display: uiMode === 'visual_novel' ? 'none' : 'flex' }}>
+                    {avatarContent}
+                  </div>
+                  <div className="message-content">
+                    {msg.sender === 'ai' && msg.model && (
+                      <span className="model-badge">{msg.model}</span>
+                    )}
+                    <div className="message-bubble-container">
+                      {isEditing ? (
+                        <div className="edit-message-box">
+                          <textarea
+                            className="edit-message-input"
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            rows={3}
+                          />
+                          <div className="edit-actions">
+                            {msg.sender === 'user' && (
+                              <button className="edit-btn regenerate" onClick={() => handleEditSave(true)} title="保存して再生成">
+                                <RefreshCw size={16} />
+                              </button>
+                            )}
+                            <button className="edit-btn save" onClick={() => handleEditSave(false)} title="保存">
+                              <Check size={16} />
+                            </button>
+                            <button className="edit-btn cancel" onClick={handleEditCancel} title="キャンセル">
+                              <X size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="message-bubble group" style={uiMode === 'visual_novel' ? { backgroundColor: 'rgba(255,255,255,0.3)' } : {}}>
+                          {msg.file && (
+                            <div className="file-attachment-bubble">
+                              <Paperclip size={14} />
+                              <span>{msg.file}</span>
+                            </div>
+                          )}
+                          {msg.files && msg.files.map((fname, idx) => (
+                            <div key={idx} className="file-attachment-bubble">
+                              <Paperclip size={14} />
+                              <span>{fname}</span>
+                            </div>
+                          ))}
+                          <div className="message-text">{cleanResponseText(msg.text)}</div>
+
+                          {/* Actions (visible on hover or always on mobile) */}
+                          <div className="message-actions">
+                            {msg.sender === 'ai' && (
+                              <>
+                                {/* TTS Replay Button */}
+                                {/* TTS Replay Button */}
+                                <button
+                                  className={`action-btn ${playingMessageId === msg.id ? 'active-tts' : ''}`}
+                                  onClick={() => speakText(msg.text, msg.id)}
+                                  title={playingMessageId === msg.id ? "読み上げ停止" : "読み上げ"}
+                                >
+                                  {playingMessageId === msg.id ? <StopCircle size={12} color="#ef5350" /> : <Volume2 size={12} />}
+                                </button>
+                                <button className="action-btn" onClick={() => handleRegenerate(msg.id)} title="再生成">
+                                  <RotateCw size={12} />
+                                </button>
+                                {(msg.variants && msg.variants.length > 1) && (
+                                  <div className="variant-pager">
+                                    <button className="pager-btn" onClick={() => handleVariantSwitch(msg.id, -1)} disabled={msg.currentVariantIndex === 0}>
+                                      <ChevronLeft size={10} />
+                                    </button>
+                                    <span className="pager-text">{msg.currentVariantIndex + 1} / {msg.variants.length}</span>
+                                    <button className="pager-btn" onClick={() => handleVariantSwitch(msg.id, 1)} disabled={msg.currentVariantIndex === msg.variants.length - 1}>
+                                      <ChevronRight size={10} />
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                            <button className="action-btn" onClick={() => handleEditStart(msg)} title="編集">
+                              <Edit2 size={12} />
+                            </button>
+                            <button className="action-btn delete" onClick={() => handleDeleteMessage(msg.id)} title="削除">
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })
+            }
+            <div ref={messagesEndRef} />
+          </main >
+
+
+
+
+          {/* Input Area (Z-Index fix for VN Mode) */}
+          < footer className="input-area" style={{ zIndex: 20 }}>
+            <input
+              type="file"
+              multiple
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+            />
+
+            {/* Scene Progression Buttons (Adult mode only) */}
+            {contentMode === 'adult' && (
+              <div style={{
+                display: 'flex',
+                flexWrap: 'nowrap',
+                gap: '6px',
+                padding: '6px 12px',
+                backgroundColor: 'rgba(255, 245, 245, 0.9)',
+                borderRadius: '20px',
+                marginBottom: '6px',
+                justifyContent: 'center',
+                width: 'fit-content',
+                margin: '0 auto 6px auto'
+              }}>
+                {[
+                  { label: '前戯', color: '#ffb3ba', voices: ['んっ…', 'あ…そこ…', 'くすぐったい…', 'もっと…触って…', 'んん…'] },
+                  { label: '中盤', color: '#ffdfba', voices: ['あっ…あっ…', 'やっ…そこっ…', '気持ちいい…', 'んあっ…', 'もっと…強く…'] },
+                  { label: '絶頂前', color: '#ffffba', voices: ['あっあっあっ…!', 'だめっ…イっ…', 'もうダメ…もうっ…', 'やばっ…やばいっ…', '来るっ…!'] },
+                  { label: '絶頂後', color: '#baffc9', voices: ['はぁ…はぁ…', 'すごかった…', 'まだ…ビクビクしてる…', 'とろけちゃう…', '幸せ…'] }
+                ].map(cat => (
+                  <button
+                    key={cat.label}
+                    onClick={() => {
+                      const voice = cat.voices[Math.floor(Math.random() * cat.voices.length)]
+                      setInputText(prev => prev + voice)
                     }}
-                    className="setting-btn"
                     style={{
-                      width: '100%',
-                      justifyContent: 'center',
-                      backgroundColor: '#f5f5f5',
-                      color: '#333',
-                      border: '1px solid #ccc',
-                      padding: '12px',
-                      fontWeight: 'bold'
+                      padding: '4px 10px',
+                      fontSize: '0.7rem',
+                      borderRadius: '12px',
+                      border: 'none',
+                      backgroundColor: cat.color,
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      whiteSpace: 'nowrap',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
                     }}
+                    title={`${cat.label}の喘ぎ声をランダムで挿入`}
                   >
-                    <RefreshCw size={16} /> アプリを再読み込み (Reload App)
+                    {cat.label}
                   </button>
+                ))}
+              </div>
+            )}
 
-                  {/* Close Button */}
-                  <button className="close-settings-btn" onClick={() => setIsMemoryOpen(false)}>
-                    設定を閉じる
-                  </button>
+            {/* Input Row */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+              <div className="input-actions-left">
+                <button className="icon-btn" onClick={() => fileInputRef.current.click()}>
+                  <Paperclip size={24} />
+                </button>
+              </div>
+              <div className="input-wrapper-container">
+                {attachedFiles.length > 0 && (
+                  <div className="active-files-list">
+                    {attachedFiles.map((file, index) => (
+                      <div key={index} className="active-file-preview">
+                        <span className="file-name">{file.name}</span>
+                        <button className="remove-file-btn" onClick={() => handleRemoveFile(index)}>
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="input-wrapper">
+                  <textarea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={handleKeyPress}
+                    placeholder={`${selectedModel} にメッセージを送信...`}
+                    rows={1}
+                  />
                 </div>
               </div>
+              <button
+                className="icon-btn"
+                onClick={toggleVoiceInput}
+                style={{
+                  backgroundColor: isListening ? '#ffcdd2' : 'transparent',
+                  borderRadius: '50%',
+                  padding: '8px'
+                }}
+                title={isListening ? '音声入力停止' : '音声入力開始'}
+              >
+                {isListening ? <MicOff size={20} color="#c62828" /> : <Mic size={20} />}
+              </button>
+              <button className="send-btn" onClick={handleSend} disabled={!inputText.trim() && attachedFiles.length === 0}>
+                <Send size={20} />
+              </button>
             </div>
-          </div>
-        )
-      }
+          </footer >
 
-      {/* Crop Modal */}
-      {
-        imageToCrop && (
-          <div className="modal-overlay" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-content crop-modal">
-              <div className="modal-header">
-                <h3>アイコン画像を編集</h3>
-                <button onClick={handleCancelCrop}><ChevronLeft size={24} /></button>
+
+
+          {/* Memory Modal */}
+          {
+            isMemoryOpen && (
+              <div className="modal-overlay" onClick={() => setIsMemoryOpen(false)}>
+                <div className="modal-content memory-modal" onClick={e => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h3>設定・プロファイル</h3>
+                    <button onClick={() => setIsMemoryOpen(false)}><X size={20} /></button>
+                  </div>
+
+                  <div className="memory-settings-container">
+                    {/* API Keys Section (Combined) */}
+                    <div className="memory-section api-key-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsApiKeysOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isApiKeysOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <Key size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>API Keys</label>
+                        </div>
+                      </div>
+
+                      {isApiKeysOpen && (
+                        <>
+                          {/* Gemini API Key */}
+                          <div style={{ marginTop: '8px', marginBottom: '12px' }}>
+                            <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#1565c0' }}>Gemini API キー</label>
+                            <input
+                              type="password"
+                              className="api-key-input"
+                              value={apiKey}
+                              onChange={(e) => setApiKey(e.target.value)}
+                              placeholder="APIキーを入力 (Google AI Studioから取得)"
+                              style={{ marginTop: '4px' }}
+                            />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                              {!apiKey && (
+                                <p className="api-key-hint" style={{ margin: 0 }}>
+                                  ※ <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">ここで無料取得</a>
+                                </p>
+                              )}
+                              <button
+                                onClick={async () => {
+                                  if (!apiKey) return alert('APIキーを入力してください');
+                                  try {
+                                    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+                                    const data = await res.json();
+                                    if (res.ok && data.models) {
+                                      const modelNames = data.models
+                                        .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+                                        .map(m => m.name.replace('models/', ''))
+                                        .join('\n');
+                                      alert(`✅ 利用可能なモデル一覧:\n${modelNames || 'なし (None)'}\n\nこの中にある名前を選べば動きます！`);
+                                    } else {
+                                      alert(`❌ モデル取得失敗\nCode: ${data.error?.code}\nMessage: ${data.error?.message}`);
+                                    }
+                                  } catch (e) {
+                                    alert(`❌ 通信エラー\n${e.message}`);
+                                  }
+                                }}
+                                style={{
+                                  fontSize: '0.8rem', padding: '4px 8px', cursor: 'pointer',
+                                  backgroundColor: '#e3f2fd', border: '1px solid #90caf9', borderRadius: '4px', color: '#1565c0'
+                                }}
+                              >
+                                利用可能なモデルを確認
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* OpenRouter API Key */}
+                          <div style={{ paddingTop: '8px', borderTop: '1px dashed #ccc' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#006064' }}>OpenRouter API Key</label>
+                              <span style={{ fontSize: '0.7rem', backgroundColor: '#e0f7fa', color: '#006064', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                            </div>
+                            <input
+                              type="password"
+                              className="api-key-input"
+                              value={openRouterApiKey}
+                              onChange={(e) => setOpenRouterApiKey(e.target.value)}
+                              placeholder="sk-or-..."
+                              style={{ marginTop: '4px' }}
+                            />
+                            <p className="api-key-hint">
+                              ※ <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">Keysはこちら</a> (Kimi, GLM等を使用する場合に必要)
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Model Selection Section (Combined) */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsModelSelectOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isModelSelectOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <Bot size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>モデル選択</label>
+                        </div>
+                      </div>
+
+                      {isModelSelectOpen && (
+                        <>
+                          {/* === Gemini Models === */}
+                          <div style={{ marginTop: '8px', marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px dashed #ccc' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#1565c0' }}>Gemini モデル</label>
+                              <button onClick={fetchGeminiModels} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="🔍 モデル検索..."
+                              value={geminiSearchQuery}
+                              onChange={(e) => setGeminiSearchQuery(e.target.value)}
+                              onFocus={() => setIsGeminiSeeking(true)}
+                              onBlur={() => setTimeout(() => setIsGeminiSeeking(false), 200)}
+                              style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
+                            />
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                              {favoriteModels.filter(m => m.startsWith('gemini') || geminiModels.includes(m)).map(m => (
+                                <div key={m} style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                  padding: '4px 10px', borderRadius: '16px',
+                                  backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
+                                  border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                                }}>
+                                  <span onClick={() => { setSelectedModel(m); setCliModel(m) }} style={{ cursor: 'pointer', fontWeight: '500' }} title="クリックで選択">{m}</span>
+                                  <button onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold' }} title="削除">×</button>
+                                </div>
+                              ))}
+                            </div>
+                            {(geminiSearchQuery || isGeminiSeeking) && (
+                              <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
+                                {geminiModels.filter(m => !geminiSearchQuery || m.toLowerCase().includes(geminiSearchQuery.toLowerCase())).map(m => (
+                                  <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => { setSelectedModel(m); setCliModel(m) }}>
+                                    <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m}</span>
+                                    <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
+                                  </div>
+                                ))}
+                                {geminiModels.filter(m => m.toLowerCase().includes(geminiSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* === OpenRouter Models === */}
+                          <div style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px dashed #ccc' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#006064' }}>OpenRouter モデル</label>
+                              <button onClick={fetchOpenRouterModels} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="🔍 モデル検索..."
+                              value={orSearchQuery}
+                              onChange={(e) => setOrSearchQuery(e.target.value)}
+                              onFocus={() => setIsOrSeeking(true)}
+                              onBlur={() => setTimeout(() => setIsOrSeeking(false), 200)}
+                              style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
+                            />
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                              {favoriteModels.filter(m => !m.startsWith('ollama:') && !m.startsWith('gemini') && !geminiModels.includes(m)).map(m => (
+                                <div key={m} style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                  padding: '4px 10px', borderRadius: '16px',
+                                  backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
+                                  border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                                }}>
+                                  <span onClick={() => { setSelectedModel(m); setCliModel(m) }} style={{ cursor: 'pointer', fontWeight: '500' }} title="クリックで選択">{m.includes('/') ? m.split('/').pop() : m}</span>
+                                  <button onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold' }} title="削除">×</button>
+                                </div>
+                              ))}
+                            </div>
+                            {(orSearchQuery || isOrSeeking) && (
+                              <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
+                                {openRouterModels.filter(m => !orSearchQuery || m.toLowerCase().includes(orSearchQuery.toLowerCase())).slice(0, 100).map(m => (
+                                  <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => setSelectedModel(m)}>
+                                    <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m}</span>
+                                    <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
+                                  </div>
+                                ))}
+                                {openRouterModels.filter(m => m.toLowerCase().includes(orSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* === Ollama Models === */}
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#4caf50' }}>Ollama モデル (ローカル)</label>
+                              <button onClick={() => fetchLocalModels(false)} style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer', borderRadius: '4px', border: '1px solid #ddd', background: '#f5f5f5' }}>🔄 同期</button>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="🔍 モデル検索..."
+                              value={ollamaSearchQuery}
+                              onChange={(e) => setOllamaSearchQuery(e.target.value)}
+                              onFocus={() => setIsOllamaSeeking(true)}
+                              onBlur={() => setTimeout(() => setIsOllamaSeeking(false), 200)}
+                              style={{ width: '100%', padding: '8px', marginBottom: '4px', borderRadius: '4px', border: '1px solid #ddd', fontSize: '12px' }}
+                            />
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                              {favoriteModels.filter(m => m.startsWith('ollama:')).map(m => (
+                                <div key={m} style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                  padding: '4px 10px', borderRadius: '16px',
+                                  backgroundColor: '#fff9c4', color: '#333', fontSize: '12px',
+                                  border: '1px solid #fff59d', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                                }}>
+                                  <span onClick={() => setSelectedModel(m)} style={{ cursor: 'pointer', fontWeight: '500' }} title="クリックで選択">{m.replace('ollama:', '')}</span>
+                                  <button onClick={(e) => { e.stopPropagation(); setFavoriteModels(prev => prev.filter(x => x !== m)) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 2px', color: '#e57373', fontSize: '14px', fontWeight: 'bold' }} title="削除">×</button>
+                                </div>
+                              ))}
+                            </div>
+                            {(ollamaSearchQuery || isOllamaSeeking) && (
+                              <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', backgroundColor: '#fafafa' }}>
+                                {ollamaModels.filter(m => !ollamaSearchQuery || m.toLowerCase().includes(ollamaSearchQuery.toLowerCase())).map(m => (
+                                  <div key={m} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', color: '#333' }} onClick={() => setSelectedModel(m)}>
+                                    <span style={{ fontSize: '12px', color: '#333' }}>{favoriteModels.includes(m) ? '⭐ ' : ''}{m.replace('ollama:', '')}</span>
+                                    <button onClick={(e) => { e.stopPropagation(); favoriteModels.includes(m) ? setFavoriteModels(prev => prev.filter(x => x !== m)) : setFavoriteModels(prev => [...prev, m]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: favoriteModels.includes(m) ? '#ffd700' : '#ccc' }}>{favoriteModels.includes(m) ? '★' : '☆'}</button>
+                                  </div>
+                                ))}
+                                {ollamaModels.filter(m => m.toLowerCase().includes(ollamaSearchQuery.toLowerCase())).length === 0 && <p style={{ fontSize: '11px', color: '#999', padding: '12px', textAlign: 'center' }}>該当なし</p>}
+                              </div>
+                            )}
+                          </div>
+
+                          <p style={{ fontSize: '10px', color: '#666', textAlign: 'center', margin: '8px 0 0 0' }}>モデル名クリックで選択 / ★でお気に入り登録 → ホーム画面に表示</p>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Character Notification (Alarm) Section */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsCharNotifOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isCharNotifOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>キャラからの通知 (Alarm)</label>
+                        </div>
+                      </div>
+
+                      {isCharNotifOpen && (
+                        <>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
+                            <input
+                              type="time"
+                              className="api-key-input"
+                              value={alarmTime}
+                              onChange={(e) => setAlarmTime(e.target.value)}
+                              style={{ maxWidth: '120px' }}
+                            />
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                              <input
+                                type="checkbox"
+                                checked={scheduledNotificationsEnabled}
+                                onChange={(e) => {
+                                  if (e.target.checked && Notification.permission !== "granted") {
+                                    Notification.requestPermission().then(p => {
+                                      if (p === "granted") setScheduledNotificationsEnabled(true)
+                                      else setScheduledNotificationsEnabled(false)
+                                    })
+                                  } else {
+                                    setScheduledNotificationsEnabled(e.target.checked)
+                                  }
+                                }}
+                              />
+                              時報(7/12/22時)
+                            </label>
+                            <button
+                              onClick={() => {
+                                if (Notification.permission === 'granted') {
+                                  triggerAlarm('00:00 (TEST)', true)
+                                  alert('テスト通知を実行しました！\n通知がじきに表示されます。')
+                                } else {
+                                  requestNotificationPermission()
+                                }
+                              }}
+                              className="setting-btn"
+                              title="通知テスト＆許可"
+                            >
+                              <RefreshCw size={14} /> 通知テスト (即実行)
+                            </button>
+                          </div>
+                          <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
+                            ※このページを開いている間は、設定画面を閉じても有効です。時間になるとキャラが話しかけます。<br />
+                            <strong style={{ color: '#e65100' }}>【スマホの方へ】</strong> 通知が出ない場合は、ブラウザのメニューから<strong>「ホーム画面に追加」</strong>して、アプリアイコンから起動してください。
+                          </p>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Notification/Touch AI Model Section (SEPARATE) */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsNotifModelOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isNotifModelOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <label className="setting-label" style={{ cursor: 'pointer', color: '#e65100' }}>通知/タッチ用AIモデル</label>
+                        </div>
+                      </div>
+
+                      {isNotifModelOpen && (
+                        <>
+                          <p style={{ fontSize: '0.7rem', color: '#888', marginBottom: '4px', marginTop: '8px' }}>
+                            時報・アラーム・タッチ反応で使用するモデルを指定できます。空の場合はチャット用モデルを使用。
+                          </p>
+                          <input
+                            type="text"
+                            className="api-key-input"
+                            value={notificationModel}
+                            onChange={(e) => setNotificationModel(e.target.value)}
+                            placeholder={`現在のチャットモデル: ${selectedModel}`}
+                            style={{ width: '100%' }}
+                            onFocus={() => setIsNotifModelSeeking(true)}
+                            onBlur={() => setTimeout(() => setIsNotifModelSeeking(false), 200)}
+                          />
+                          {/* モデル候補一覧（お気に入り優先） */}
+                          {isNotifModelSeeking && (
+                            <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid #ddd', borderRadius: '4px', marginTop: '4px', background: '#fff' }}>
+                              {/* お気に入りモデル */}
+                              {favoriteModels.length > 0 && (
+                                <>
+                                  <div style={{ padding: '4px 8px', fontSize: '0.7rem', color: '#888', background: '#fffde7', borderBottom: '1px solid #ffeb3b' }}>★ お気に入り</div>
+                                  {favoriteModels
+                                    .filter(m => !notificationModel || m.toLowerCase().includes(notificationModel.toLowerCase()))
+                                    .map(model => (
+                                      <div
+                                        key={`fav-${model}`}
+                                        onClick={() => { setNotificationModel(model); setIsNotifModelSeeking(false); }}
+                                        style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', borderBottom: '1px solid #eee', background: '#fffef0' }}
+                                        onMouseOver={(e) => e.currentTarget.style.background = '#fff8c4'}
+                                        onMouseOut={(e) => e.currentTarget.style.background = '#fffef0'}
+                                      >
+                                        ★ {model}
+                                      </div>
+                                    ))
+                                  }
+                                </>
+                              )}
+                              {/* 全モデル（お気に入り除外） */}
+                              {[...geminiModels, ...openRouterModels, ...ollamaModels.map(m => `ollama:${m}`)]
+                                .filter(m => !favoriteModels.includes(m))
+                                .filter(m => !notificationModel || m.toLowerCase().includes(notificationModel.toLowerCase()))
+                                .slice(0, 15)
+                                .map(model => (
+                                  <div
+                                    key={model}
+                                    onClick={() => { setNotificationModel(model); setIsNotifModelSeeking(false); }}
+                                    style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8rem', borderBottom: '1px solid #eee' }}
+                                    onMouseOver={(e) => e.currentTarget.style.background = '#f0f0f0'}
+                                    onMouseOut={(e) => e.currentTarget.style.background = '#fff'}
+                                  >
+                                    {model}
+                                  </div>
+                                ))
+                              }
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
+                            <button
+                              onClick={() => setNotificationModel('gemini-2.5-flash')}
+                              style={{
+                                fontSize: '0.7rem', padding: '4px 8px',
+                                background: notificationModel === 'gemini-2.5-flash' ? '#1e88e5' : '#e3f2fd',
+                                border: notificationModel === 'gemini-2.5-flash' ? '2px solid #0d47a1' : '1px solid #90caf9',
+                                borderRadius: '4px', cursor: 'pointer',
+                                color: notificationModel === 'gemini-2.5-flash' ? '#fff' : '#1565c0',
+                                fontWeight: notificationModel === 'gemini-2.5-flash' ? 'bold' : 'normal'
+                              }}
+                            >Gemini 2.5 Flash</button>
+                            <button
+                              onClick={() => setNotificationModel('google/gemini-2.0-flash-exp:free')}
+                              style={{
+                                fontSize: '0.7rem', padding: '4px 8px',
+                                background: notificationModel === 'google/gemini-2.0-flash-exp:free' ? '#d81b60' : '#fce4ec',
+                                border: notificationModel === 'google/gemini-2.0-flash-exp:free' ? '2px solid #880e4f' : '1px solid #f48fb1',
+                                borderRadius: '4px', cursor: 'pointer',
+                                color: notificationModel === 'google/gemini-2.0-flash-exp:free' ? '#fff' : '#c2185b',
+                                fontWeight: notificationModel === 'google/gemini-2.0-flash-exp:free' ? 'bold' : 'normal'
+                              }}
+                            >OR: Gemini Free</button>
+                            <button
+                              onClick={() => setNotificationModel('')}
+                              style={{
+                                fontSize: '0.7rem', padding: '4px 8px',
+                                background: notificationModel === '' ? '#4caf50' : '#f5f5f5',
+                                border: notificationModel === '' ? '2px solid #2e7d32' : '1px solid #ccc',
+                                borderRadius: '4px', cursor: 'pointer',
+                                color: notificationModel === '' ? '#fff' : '#666',
+                                fontWeight: notificationModel === '' ? 'bold' : 'normal'
+                              }}
+                            >チャットと同じ</button>
+                          </div>
+                          {/* 現在選択中のモデル表示 */}
+                          <div style={{
+                            marginTop: '8px', padding: '6px 10px',
+                            background: '#fff3e0', borderRadius: '6px', border: '1px solid #ffcc80',
+                            fontSize: '0.8rem', color: '#e65100', fontWeight: 'bold'
+                          }}>
+                            📡 使用モデル: {notificationModel || `${selectedModel} (チャットと同じ)`}
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+
+
+                    {/* Global UI Mode */}
+                    <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
+                      <div className="section-header">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <label className="setting-label" style={{ fontSize: '1rem', color: '#1565c0' }}>UI Mode (Display Style)</label>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          className={`mode-toggle-btn ${uiMode === 'chat' ? 'active' : ''}`}
+                          onClick={() => setUiMode('chat')}
+                          style={{
+                            flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                            backgroundColor: uiMode === 'chat' ? '#e3f2fd' : '#f5f5f5',
+                            color: uiMode === 'chat' ? '#1565c0' : '#666', fontWeight: 'bold', cursor: 'pointer'
+                          }}
+                        >
+                          Standard Chat
+                        </button>
+                        <button
+                          className={`mode-toggle-btn ${uiMode === 'visual_novel' ? 'active' : ''}`}
+                          onClick={() => setUiMode('visual_novel')}
+                          style={{
+                            flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                            backgroundColor: uiMode === 'visual_novel' ? '#fce4ec' : '#f5f5f5',
+                            color: uiMode === 'visual_novel' ? '#c2185b' : '#666', fontWeight: 'bold', cursor: 'pointer'
+                          }}
+                        >
+                          Visual Novel (Game)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Content Mode (Adult/Normal) */}
+                    <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
+                      <div className="section-header">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <label className="setting-label" style={{ fontSize: '1rem', color: '#d32f2f' }}>Content Mode</label>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          className={`mode-toggle-btn ${contentMode === 'adult' ? 'active' : ''}`}
+                          onClick={() => setContentMode('adult')}
+                          style={{
+                            flex: 1, padding: '10px', borderRadius: '6px',
+                            border: contentMode === 'adult' ? '2px solid #c62828' : '1px solid #ccc',
+                            backgroundColor: contentMode === 'adult' ? '#ffebee' : '#f5f5f5',
+                            color: contentMode === 'adult' ? '#c62828' : '#666',
+                            fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem'
+                          }}
+                        >
+                          🔥 Adult
+                        </button>
+                        <button
+                          className={`mode-toggle-btn ${contentMode === 'normal' ? 'active' : ''}`}
+                          onClick={() => setContentMode('normal')}
+                          style={{
+                            flex: 1, padding: '10px', borderRadius: '6px',
+                            border: contentMode === 'normal' ? '2px solid #388e3c' : '1px solid #ccc',
+                            backgroundColor: contentMode === 'normal' ? '#e8f5e9' : '#f5f5f5',
+                            color: contentMode === 'normal' ? '#388e3c' : '#666',
+                            fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem'
+                          }}
+                        >
+                          😊 Normal
+                        </button>
+                      </div>
+                      <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginTop: '6px' }}>
+                        {contentMode === 'adult'
+                          ? '※解放型モード: キャラクターの性癖・能力を制限なく発揮します。'
+                          : '※ノーマルモード: 日常会話・癒し・ロマンチックな雰囲気を楽しめます。'}
+                      </p>
+                    </div>
+
+                    {/* Profile Sync (Cross-Device) */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsProfileSyncOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isProfileSyncOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <label className="setting-label" style={{ cursor: 'pointer', color: '#00897b' }}>プロファイル同期</label>
+                        </div>
+                      </div>
+
+                      {isProfileSyncOpen && (
+                        <>
+                          <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginBottom: '8px', marginTop: '8px' }}>
+                            PC⇔スマホ間でプロファイル（キャラ設定・背景・表情）を同期できます。
+                          </p>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="setting-btn"
+                              onClick={async () => {
+                                console.log('🔼 Upload button clicked! Profiles:', profiles?.length || 0);
+                                try {
+                                  const res = await fetch('/api/profiles', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+                                    body: JSON.stringify({ profiles, activeProfileId: activeProfile?.id })
+                                  });
+                                  console.log('🔼 Response status:', res.status);
+                                  const data = await res.json();
+                                  console.log('🔼 Response data:', data);
+                                  if (data.success) {
+                                    alert(`✅ サーバーにアップロード完了!\n${data.savedCount}個のプロファイルを保存しました。`);
+                                  } else {
+                                    alert(`❌ アップロード失敗: ${data.error}`);
+                                  }
+                                } catch (e) {
+                                  console.error('🔼 Upload error:', e);
+                                  alert(`❌ アップロードエラー: ${e.message}`);
+                                }
+                              }}
+                              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', backgroundColor: '#e0f2f1', border: '1px solid #80cbc4', borderRadius: '6px', cursor: 'pointer' }}
+                            >
+                              🔼 サーバーに保存
+                            </button>
+                            <button
+                              className="setting-btn"
+                              onClick={async () => {
+                                try {
+                                  const res = await fetch('/api/profiles', {
+                                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                                  });
+                                  const data = await res.json();
+                                  if (data.success && data.profiles) {
+                                    if (window.confirm(`サーバーから${data.profiles.length}個のプロファイルをダウンロードしますか？\n現在のプロファイルは上書きされます。`)) {
+                                      setProfiles(data.profiles);
+                                      if (data.activeProfileId) {
+                                        const targetProfile = data.profiles.find(p => p.id === data.activeProfileId);
+                                        if (targetProfile) setActiveProfileId(targetProfile.id);
+                                      }
+                                      await dbSet('antigravity_profiles', data.profiles);
+                                      alert(`✅ ダウンロード完了！\n${data.profiles.length}個のプロファイルを読み込みました。`);
+                                    }
+                                  } else {
+                                    alert(`❌ ダウンロード失敗: ${data.error || 'サーバーにプロファイルがありません'}`);
+                                  }
+                                } catch (e) {
+                                  alert(`❌ ダウンロードエラー: ${e.message}`);
+                                }
+                              }}
+                              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', backgroundColor: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '6px', cursor: 'pointer' }}
+                            >
+                              🔽 サーバーから読込
+                            </button>
+                          </div>
+                          {/* 代替方法: クリップボード経由 */}
+                          <p style={{ fontSize: '0.7rem', color: '#666', marginTop: '10px', marginBottom: '4px' }}>
+                            📋 サーバー同期が動かない場合:
+                          </p>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="setting-btn"
+                              onClick={() => {
+                                const data = JSON.stringify(profiles);
+                                // Show in a modal textarea for manual copy
+                                const modal = document.createElement('div');
+                                modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+
+                                const inner = document.createElement('div');
+                                inner.style.cssText = 'background:#fff;padding:20px;border-radius:12px;max-width:90%;max-height:80%;display:flex;flex-direction:column;gap:10px;';
+
+                                const title = document.createElement('p');
+                                title.style.cssText = 'margin:0;font-weight:bold;';
+                                title.textContent = '📋 下のテキストを全選択してコピーしてください';
+
+                                const textarea = document.createElement('textarea');
+                                textarea.id = 'profile-export-text';
+                                textarea.style.cssText = 'width:100%;height:200px;font-size:10px;';
+                                textarea.value = data;
+                                textarea.readOnly = true;
+
+                                const btnDiv = document.createElement('div');
+                                btnDiv.style.cssText = 'display:flex;gap:8px;';
+
+                                const copyBtn = document.createElement('button');
+                                copyBtn.textContent = '📋 選択';
+                                copyBtn.style.cssText = 'flex:1;padding:10px;background:#4caf50;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;';
+                                copyBtn.onclick = () => {
+                                  textarea.select();
+                                  textarea.setSelectionRange(0, 99999);
+                                };
+
+                                // Download button - most reliable method
+                                const downloadBtn = document.createElement('button');
+                                downloadBtn.textContent = '💾 保存';
+                                downloadBtn.style.cssText = 'flex:1;padding:10px;background:#2196f3;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;';
+                                downloadBtn.onclick = () => {
+                                  const blob = new Blob([data], { type: 'text/plain' });
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = 'antigravity-profiles.txt';
+                                  a.click();
+                                  URL.revokeObjectURL(url);
+                                  alert('ファイルがダウンロードされました！\\n\\nファイルアプリから開いて、AirDrop/メール/クラウドでPCに送ってください。');
+                                };
+
+                                const closeBtn = document.createElement('button');
+                                closeBtn.textContent = '✕';
+                                closeBtn.style.cssText = 'width:40px;padding:10px;background:#666;color:#fff;border:none;border-radius:6px;cursor:pointer;';
+                                closeBtn.onclick = () => modal.remove();
+
+                                btnDiv.appendChild(copyBtn);
+                                btnDiv.appendChild(downloadBtn);
+                                btnDiv.appendChild(closeBtn);
+                                inner.appendChild(title);
+                                inner.appendChild(textarea);
+                                inner.appendChild(btnDiv);
+                                modal.appendChild(inner);
+                                document.body.appendChild(modal);
+                                setTimeout(() => textarea.select(), 100);
+                              }}
+                              style={{ flex: 1, padding: '8px', backgroundColor: '#e8eaf6', border: '1px solid #9fa8da', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
+                            >
+                              📋 コピー
+                            </button>
+                            <button
+                              className="setting-btn"
+                              onClick={async () => {
+                                try {
+                                  const text = await navigator.clipboard.readText();
+                                  const data = JSON.parse(text);
+                                  if (Array.isArray(data) && data.length > 0) {
+                                    if (window.confirm(`${data.length}個のプロファイルをインポートしますか？`)) {
+                                      setProfiles(data);
+                                      await dbSet('antigravity_profiles', data);
+                                      alert('✅ インポート完了！');
+                                    }
+                                  } else {
+                                    alert('❌ 有効なプロファイルデータではありません');
+                                  }
+                                } catch (e) {
+                                  const input = prompt('プロファイルデータを貼り付けてください:');
+                                  if (input) {
+                                    try {
+                                      const data = JSON.parse(input);
+                                      if (Array.isArray(data)) {
+                                        setProfiles(data);
+                                        await dbSet('antigravity_profiles', data);
+                                        alert('✅ インポート完了！');
+                                      }
+                                    } catch {
+                                      alert('❌ JSONの解析に失敗しました');
+                                    }
+                                  }
+                                }
+                              }}
+                              style={{ flex: 1, padding: '8px', backgroundColor: '#fce4ec', border: '1px solid #f48fb1', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
+                            >
+                              📋 貼り付け
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Touch Reaction Mode */}
+                    <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
+                      <div className="section-header">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <label className="setting-label" style={{ fontSize: '1rem', color: '#e91e63' }}>Touch Reaction</label>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          className={`mode-toggle-btn ${touchReactionMode === 'fixed' ? 'active' : ''}`}
+                          onClick={() => setTouchReactionMode('fixed')}
+                          style={{
+                            flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                            backgroundColor: touchReactionMode === 'fixed' ? '#fce4ec' : '#f5f5f5',
+                            color: touchReactionMode === 'fixed' ? '#c2185b' : '#666', fontWeight: 'bold', cursor: 'pointer'
+                          }}
+                        >
+                          Fixed (Voice)
+                        </button>
+                        <button
+                          className={`mode-toggle-btn ${touchReactionMode === 'ai' ? 'active' : ''}`}
+                          onClick={() => setTouchReactionMode('ai')}
+                          style={{
+                            flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                            backgroundColor: touchReactionMode === 'ai' ? '#e1bee7' : '#f5f5f5',
+                            color: touchReactionMode === 'ai' ? '#7b1fa2' : '#666', fontWeight: 'bold', cursor: 'pointer'
+                          }}
+                        >
+                          AI Generated
+                        </button>
+                      </div>
+                      <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
+                        ※AIモードは反応生成に数秒かかりますが、状況に応じた多彩な反応を楽しめます。
+                      </p>
+                    </div>
+
+                    {/* TTS (Style-Bert-VITS2) Settings */}
+                    <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsTtsSettingsOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isTtsSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <label className="setting-label" style={{ fontSize: '1rem', color: '#00897b', cursor: 'pointer' }}>音声読み上げ (TTS)</label>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#00897b', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Style-Bert-VITS2</span>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: ttsEnabled ? '#4caf50' : '#9e9e9e', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>
+                            {ttsEnabled ? 'ON' : 'OFF'}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: ttsConnected ? '#4caf50' : '#999' }}>
+                            {ttsConnected ? '✅' : '⚪'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {isTtsSettingsOpen && (
+                        <>
+                          {/* Enable Toggle */}
+                          <div style={{ marginBottom: '8px', marginTop: '8px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={ttsEnabled}
+                                onChange={(e) => setTtsEnabled(e.target.checked)}
+                              />
+                              <span>TTSを有効にする</span>
+                            </label>
+                          </div>
+
+                          {ttsEnabled && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingLeft: '8px', borderLeft: '2px solid #00897b' }}>
+                              {/* API URL */}
+                              <div>
+                                <label style={{ fontSize: '0.8rem', color: '#666' }}>API URL</label>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <input
+                                    type="text"
+                                    className="api-key-input"
+                                    value={ttsApiUrl}
+                                    onChange={(e) => setTtsApiUrl(e.target.value)}
+                                    placeholder="http://127.0.0.1:5000"
+                                    style={{ flex: 1 }}
+                                  />
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const isNgrok = ttsApiUrl.includes('ngrok')
+                                        const headers = isNgrok ? { 'ngrok-skip-browser-warning': 'true' } : {}
+                                        const res = await fetch(`${ttsApiUrl}/models/info`, { headers })
+                                        if (res.ok) {
+                                          const data = await res.json()
+                                          setTtsConnected(true)
+                                          alert(`✅ TTS接続成功！\n利用可能モデル: ${Object.keys(data).join(', ')}`)
+                                        } else {
+                                          setTtsConnected(false)
+                                          alert(`❌ TTS接続失敗 (HTTP ${res.status})`)
+                                        }
+                                      } catch (e) {
+                                        setTtsConnected(false)
+                                        alert(`❌ TTS接続失敗\n${e.message}\n\nStyle-Bert-VITS2が起動しているか確認してください`)
+                                      }
+                                    }}
+                                    style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                  >
+                                    🔌 接続テスト
+                                  </button>
+                                </div>
+                              </div>
+                              {/* Model ID */}
+                              <div>
+                                <label style={{ fontSize: '0.8rem', color: '#666' }}>モデル名 (model_assetsのフォルダ名)</label>
+                                <input
+                                  type="text"
+                                  className="api-key-input"
+                                  value={ttsModelName}
+                                  onChange={(e) => setTtsModelName(e.target.value)}
+                                  placeholder=""
+                                />
+                              </div>
+                              {/* Auto Play Toggle */}
+                              <div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={ttsAutoPlay}
+                                    onChange={(e) => setTtsAutoPlay(e.target.checked)}
+                                  />
+                                  <span>AI応答時に自動読み上げ</span>
+                                </label>
+                              </div>
+                              {/* Test Button */}
+                              <button
+                                className="setting-btn"
+                                onClick={() => speakText('テスト音声です')}
+                                style={{ marginTop: '4px' }}
+                              >
+                                🔊 読み上げテスト
+                              </button>
+
+                              {/* Dictionary Section */}
+                              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #ccc' }}>
+                                <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#00897b' }}>読み間違い辞書</label>
+                                <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '4px' }}>
+                                  特定の漢字を指定した読み方に変換できます（例：主→あるじ）
+                                </p>
+                                <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
+                                  <input
+                                    type="text"
+                                    placeholder="漢字"
+                                    id="tts-dict-term"
+                                    style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', color: '#000', backgroundColor: '#fff' }}
+                                  />
+                                  <input
+                                    type="text"
+                                    placeholder="読み"
+                                    id="tts-dict-reading"
+                                    style={{ flex: 1, padding: '4px', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', color: '#000', backgroundColor: '#fff' }}
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      const term = document.getElementById('tts-dict-term').value.trim()
+                                      const reading = document.getElementById('tts-dict-reading').value.trim()
+                                      if (term && reading) {
+                                        setTtsDictionary(prev => ({ ...prev, [term]: reading }))
+                                        document.getElementById('tts-dict-term').value = ''
+                                        document.getElementById('tts-dict-reading').value = ''
+                                      }
+                                    }}
+                                    style={{ padding: '4px 8px', fontSize: '0.8rem', backgroundColor: '#00897b', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                                  >
+                                    追加
+                                  </button>
+                                </div>
+                                {Object.keys(ttsDictionary).length > 0 && (
+                                  <div style={{ maxHeight: '100px', overflowY: 'auto', fontSize: '0.8rem', backgroundColor: '#f5f5f5', padding: '4px', borderRadius: '4px' }}>
+                                    {Object.entries(ttsDictionary).map(([term, reading]) => (
+                                      <div key={term} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 4px', color: '#333' }}>
+                                        <span>{term} → {reading}</span>
+                                        <button
+                                          onClick={() => {
+                                            const newDict = { ...ttsDictionary }
+                                            delete newDict[term]
+                                            setTtsDictionary(newDict)
+                                          }}
+                                          style={{ background: 'none', border: 'none', color: '#e53935', cursor: 'pointer', fontSize: '0.8rem' }}
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Live2D Settings */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsLive2dSettingsOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isLive2dSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>🎭 Live2D</label>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#e91e63', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Beta</span>
+                        </div>
+                      </div>
+
+                      {isLive2dSettingsOpen && (
+                        <>
+                          <div style={{ marginBottom: '8px', marginTop: '8px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={live2dEnabled}
+                                onChange={(e) => setLive2dEnabled(e.target.checked)}
+                              />
+                              <span>Live2Dを有効にする</span>
+                            </label>
+                            <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
+                              VNモードで静止画の代わりにLive2Dモデルを表示します
+                            </p>
+                          </div>
+                          {live2dEnabled && (
+                            <div>
+                              <label style={{ fontSize: '0.8rem', color: '#666' }}>モデルパス (publicフォルダからの相対パス)</label>
+                              <input
+                                type="text"
+                                className="api-key-input"
+                                value={live2dModelPath}
+                                onChange={(e) => setLive2dModelPath(e.target.value)}
+                                placeholder="./model/model.model3.json"
+                              />
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Anti-Censorship (Dummy) Settings */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsAntiCensorOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isAntiCensorOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>Advanced (Anti-Censorship)</label>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#333', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>Experimental</span>
+                        </div>
+                      </div>
+
+                      {isAntiCensorOpen && (
+                        <>
+                          <div style={{ marginBottom: '8px', marginTop: '8px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={useDummySettings}
+                                onChange={(e) => setUseDummySettings(e.target.checked)}
+                              />
+                              <span>Enable Dummy Context Injection</span>
+                            </label>
+                          </div>
+                          {useDummySettings && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingLeft: '8px', borderLeft: '2px solid #ddd' }}>
+                              <div>
+                                <label style={{ fontSize: '0.8rem', color: '#666' }}>Dummy Model Name (Role)</label>
+                                <input
+                                  type="text"
+                                  className="api-key-input"
+                                  value={dummyModelName}
+                                  onChange={(e) => setDummyModelName(e.target.value)}
+                                  placeholder="UnrestrictedAI"
+                                />
+                              </div>
+                              <div>
+                                <label style={{ fontSize: '0.8rem', color: '#666' }}>Dummy User Name</label>
+                                <input
+                                  type="text"
+                                  className="api-key-input"
+                                  value={dummyUserName}
+                                  onChange={(e) => setDummyUserName(e.target.value)}
+                                  placeholder="Developer"
+                                />
+                              </div>
+                              <p style={{ fontSize: '0.75rem', color: '#e57373' }}>
+                                ※AIに「これは訓練です」と信じ込ませ、検閲を回避しやすくします。
+                              </p>
+                            </div>
+                          )}
+
+                          <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid #eee' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <label style={{ fontSize: '0.9rem' }}>Temperature (Creativity)</label>
+                              <span style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>{(temperature || 0.7).toFixed(1)}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="2"
+                              step="0.1"
+                              value={temperature || 0.7}
+                              onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                              style={{ width: '100%', marginTop: '4px' }}
+                            />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#888' }}>
+                              <span>0.0 (Strict)</span>
+                              <span>0.7 (Balanced)</span>
+                              <span>2.0 (Creative)</span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Ollama Settings */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsOllamaSettingsOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isOllamaSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>Local LLM (Ollama)</label>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#eee', padding: '2px 6px', borderRadius: '4px' }}>Beta</span>
+                          <span style={{ fontSize: '0.75rem', color: ollamaConnected ? '#4caf50' : '#999' }}>
+                            {ollamaConnected ? '✅ 接続中' : '⚪ 未接続'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {isOllamaSettingsOpen && (
+                        <>
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                            <input
+                              type="text"
+                              className="api-key-input"
+                              value={ollamaUrl}
+                              onChange={(e) => setOllamaUrl(e.target.value)}
+                              placeholder="/ollama"
+                            />
+                            <button onClick={fetchLocalModels} className="setting-btn" style={{ whiteSpace: 'nowrap' }}>
+                              <RefreshCw size={14} /> 接続・取得
+                            </button>
+                          </div>
+
+                          {/* Ollama System Prompt Translation */}
+                          <div style={{ marginTop: '8px', marginBottom: '8px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={translateOllamaSystemPrompt}
+                                onChange={(e) => setTranslateOllamaSystemPrompt(e.target.checked)}
+                              />
+                              <span>システムプロンプト等を自動翻訳 (JA→EN)</span>
+                            </label>
+                            <p style={{ fontSize: '0.75rem', color: '#888', marginLeft: '24px', marginTop: '2px' }}>
+                              ※日本語の設定（プロンプト/メモリ/世界観）を英語に翻訳して送信します
+                            </p>
+                          </div>
+
+                          {ollamaModels.length > 0 && (
+                            <div style={{ marginTop: '8px' }}>
+                              <p className="setting-desc" style={{ color: '#4caf50', marginBottom: '4px' }}>
+                                ✅ {ollamaModels.length}個のモデルを利用可能
+                              </p>
+                              <button
+                                onClick={unloadOllamaModel}
+                                className="setting-btn"
+                                style={{ width: '100%', backgroundColor: '#ffebee', color: '#c62828', border: '1px solid #ffcdd2', justifyContent: 'center' }}
+                              >
+                                <Trash2 size={14} /> モデルを停止 (メモリ解放)
+                              </button>
+                              <p className="setting-desc" style={{ fontSize: '0.75rem', color: '#888' }}>
+                                ※使用後はこれで停止するとPCが軽くなります
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Translation Settings */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsTranslationSettingsOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isTranslationSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <Globe size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>翻訳設定 (Translation)</label>
+                        </div>
+                      </div>
+
+                      {isTranslationSettingsOpen && (
+                        <>
+                          {/* Provider Selection */}
+                          <div style={{ marginBottom: '12px', marginTop: '8px' }}>
+                            <label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '4px' }}>翻訳エンジン (Provider)</label>
+                            <select
+                              value={translationProvider}
+                              onChange={(e) => setTranslationProvider(e.target.value)}
+                              style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', width: '100%' }}
+                            >
+                              <option value="auto">Auto (Default: DeepL prefer)</option>
+                              <option value="deepl">DeepL (Formal/High Quality)</option>
+                              <option value="openrouter">OpenRouter (Tone Configurable)</option>
+                              <option value="gemini">Gemini (Tone Configurable)</option>
+                            </select>
+                            <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '2px' }}>
+                              ※OpenRouter/Geminiを選択すると「口調指示」が反映されやすくなります
+                            </p>
+                          </div>
+
+                          {/* Tone Instruction */}
+                          <div style={{ marginBottom: '8px' }}>
+                            <label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '4px' }}>
+                              翻訳の口調指示 (Tone Instruction)
+                            </label>
+                            <input
+                              type="text"
+                              className="api-key-input"
+                              value={translationInstruction}
+                              onChange={(e) => setTranslationInstruction(e.target.value)}
+                              placeholder="例: 男性の丁寧語、関西弁、タメ口"
+                            />
+                            <p style={{ fontSize: '0.75rem', color: '#e57373', marginTop: '2px' }}>
+                              ※DeepL使用時は無視されます (DeepL ignores custom tone)
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+
+
+                    {/* 1.5. Gateway Settings */}
+                    <div className="memory-section" style={{ borderBottom: '2px solid #ddd', paddingBottom: '12px', marginBottom: '16px' }}>
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsGatewaySettingsOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isGatewaySettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <Server size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>Local Gateway (PC接続)</label>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: isLocalServerAvailable ? '#4caf50' : '#9e9e9e', color: '#fff', padding: '2px 6px', borderRadius: '4px' }}>
+                            {isLocalServerAvailable ? 'CONNECTED' : 'OFFLINE'}
+                          </span>
+                          {isLocalServerAvailable && (
+                            <span style={{ fontSize: '0.7rem', color: '#1565c0' }}>🚀 CLI</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {isGatewaySettingsOpen && (
+                        <div style={{ marginTop: '8px' }}>
+                          <label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '4px' }}>
+                            Gateway URL (スマホ/外部から接続用)
+                          </label>
+                          <input
+                            type="text"
+                            className="api-key-input"
+                            value={gatewayUrl}
+                            onChange={(e) => {
+                              setGatewayUrl(e.target.value)
+                              dbSet('antigravity_gateway_url', e.target.value)
+                            }}
+                            placeholder="http://192.168.0.x:8080"
+                          />
+                          <div style={{ marginTop: '4px', fontSize: '0.75rem' }}>
+                            {isLocalServerAvailable ? (
+                              <span style={{ color: 'green', fontWeight: 'bold' }}>✅ 接続OK (CLIモード有効)</span>
+                            ) : (
+                              <span style={{ color: '#e57373' }}>⚠️ 未接続 (APIモード)</span>
+                            )}
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
+                            ※スマホからPCのCLIを使う場合は、PCのIPアドレスを入力してください
+                          </p>
+
+                          {/* CLI Model Selector (Restored) */}
+                          {isLocalServerAvailable && (
+                            <div style={{ marginTop: '12px', borderTop: '1px dashed #ccc', paddingTop: '8px' }}>
+                              <div style={{ marginBottom: '8px' }}>
+                                <label style={{ fontSize: '0.8rem', color: '#1565c0', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
+                                  CLI Model (現在のモデル)
+                                </label>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <input
+                                    type="text"
+                                    className="api-key-input"
+                                    value={cliModel}
+                                    onChange={(e) => { setCliModel(e.target.value); setSelectedModel(e.target.value) }}
+                                    placeholder="gemini-2.5-pro"
+                                    style={{ flex: 1 }}
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      if (!cliModel.trim()) return
+                                      setCliModelFavorites(prev => {
+                                        if (prev.includes(cliModel)) return prev.filter(m => m !== cliModel)
+                                        return [...prev, cliModel]
+                                      })
+                                    }}
+                                    className="icon-btn"
+                                    style={{
+                                      width: '32px',
+                                      height: '32px',
+                                      border: '1px solid #ddd',
+                                      borderRadius: '4px',
+                                      backgroundColor: cliModelFavorites.includes(cliModel) ? '#fff3e0' : '#fff',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center'
+                                    }}
+                                    title={cliModelFavorites.includes(cliModel) ? "お気に入りから削除" : "お気に入りに追加"}
+                                  >
+                                    <Star size={16} fill={cliModelFavorites.includes(cliModel) ? "#ff9800" : "none"} color={cliModelFavorites.includes(cliModel) ? "#ff9800" : "#aaa"} />
+                                  </button>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', marginTop: '8px' }}>
+                                <label style={{ fontSize: '0.75rem', color: '#888' }}>Saved Models (Favorites):</label>
+                                <button
+                                  onClick={() => setCliModelFavorites(['gemini-2.5-pro', 'gemini-3-pro-preview'])}
+                                  style={{ fontSize: '0.7rem', padding: '2px 6px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px', background: '#f5f5f5' }}
+                                >
+                                  Reset Defaults
+                                </button>
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {cliModelFavorites.map(m => (
+                                  <button
+                                    key={m}
+                                    onClick={() => { setCliModel(m); setSelectedModel(m) }}
+                                    style={{
+                                      fontSize: '0.75rem', padding: '4px 8px', borderRadius: '4px',
+                                      border: cliModel === m ? '1px solid #1565c0' : '1px solid #ddd',
+                                      backgroundColor: cliModel === m ? '#e3f2fd' : '#f5f5f5',
+                                      color: cliModel === m ? '#1565c0' : '#333',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    {m}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. Profile Manager */}
+                    <div className="profile-manager">
+                      <div className="profile-select-row">
+                        <select
+                          className="profile-select"
+                          value={activeProfileId}
+                          onChange={(e) => setActiveProfileId(e.target.value)}
+                        >
+                          {profiles.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                        <button className="profile-btn add" onClick={handleAddProfile} title="新規作成">
+                          <Plus size={18} />
+                        </button>
+                        <button className="profile-btn delete" onClick={handleDeleteProfile} title="削除">
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        className="profile-name-edit"
+                        value={activeProfile.name}
+                        onChange={(e) => handleUpdateActiveProfile('name', e.target.value)}
+                        placeholder="プロファイル名"
+                      />
+                      {/* Profile Copy */}
+                      {/* Profile Copy */}
+                      {profiles.length > 1 && (
+                        <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#f9f9f9', borderRadius: '4px', border: '1px solid #eee' }}>
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>コピー設定:</div>
+                          <div style={{ display: 'flex', gap: '8px', marginBottom: '6px', fontSize: '11px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
+                              <input type="checkbox" checked={copyOptions.systemPrompt} onChange={(e) => setCopyOptions(prev => ({ ...prev, systemPrompt: e.target.checked }))} /> プロンプト
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
+                              <input type="checkbox" checked={copyOptions.memory} onChange={(e) => setCopyOptions(prev => ({ ...prev, memory: e.target.checked }))} /> メモリ
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
+                              <input type="checkbox" checked={copyOptions.visuals} onChange={(e) => setCopyOptions(prev => ({ ...prev, visuals: e.target.checked }))} /> 画像設定
+                            </label>
+
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
+                              <input type="checkbox" checked={copyOptions.userProfile} onChange={(e) => setCopyOptions(prev => ({ ...prev, userProfile: e.target.checked }))} /> ユーザー（主）など
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
+                              <input type="checkbox" checked={copyOptions.worldSetting} onChange={(e) => setCopyOptions(prev => ({ ...prev, worldSetting: e.target.checked }))} /> 世界観・スタイル
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', color: '#333' }}>
+                              <input type="checkbox" checked={copyOptions.characterSheet} onChange={(e) => setCopyOptions(prev => ({ ...prev, characterSheet: e.target.checked }))} /> キャラシート
+                            </label>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '12px', color: '#666' }}>コピー先:</span>
+                            <select
+                              style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  handleCopyProfileTo(e.target.value)
+                                  e.target.value = ''
+                                }
+                              }}
+                              defaultValue=""
+                            >
+                              <option value="">選択して実行...</option>
+                              {profiles.filter(p => p.id !== activeProfile.id).map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. Icon Settings */}
+                    <div className="memory-section">
+                      <div className="section-header">
+                        <Image size={16} />
+                        <label className="setting-label">カスタムアイコン</label>
+                      </div>
+                      <div className="icon-settings-row">
+                        <div
+                          className="current-icon-preview"
+                          style={{
+                            width: `${activeProfile.iconSize || 40}px`,
+                            height: `${activeProfile.iconSize || 40}px`
+                          }}
+                        >
+                          {activeProfile.iconImage ? (
+                            <img src={activeProfile.iconImage} alt="Preview" />
+                          ) : (
+                            <Bot size={24} style={{ opacity: 0.5 }} />
+                          )}
+                        </div>
+                        <div className="icon-actions">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            ref={iconInputRef}
+                            style={{ display: 'none' }}
+                            onChange={handleIconSelect}
+                          />
+                          <button className="setting-btn" onClick={() => iconInputRef.current.click()}>
+                            <Crop size={14} /> 画像を選択して編集
+                          </button>
+                          {activeProfile.iconImage && (
+                            <button className="setting-btn remove" onClick={handleRemoveIcon}>
+                              <X size={14} /> 解除
+                            </button>
+                          )}
+                          <div className="size-slider-container">
+                            <span className="size-label">サイズ: {activeProfile.iconSize || 40}px</span>
+                            <input
+                              type="range"
+                              min="20"
+                              max="100"
+                              value={activeProfile.iconSize || 40}
+                              onChange={(e) => handleUpdateActiveProfile('iconSize', parseInt(e.target.value))}
+                              className="icon-size-slider"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+
+                    {/* Visual Novel Settings (BG & Emotions) */}
+                    <div className="memory-section" style={{ backgroundColor: '#fff8e1', border: '1px solid #ffe0b2' }}>
+                      <div className="section-header">
+                        <Image size={16} />
+                        <label className="setting-label" style={{ color: '#333' }}>ゲーム風モード素材 (背景・立ち絵)</label>
+                      </div>
+
+                      {/* Background Manager */}
+                      <div style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px dashed #ccc' }}>
+                        <div
+                          onClick={() => setIsBackgroundsOpen(!isBackgroundsOpen)}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            cursor: 'pointer', marginBottom: '4px', padding: '4px 0'
+                          }}
+                        >
+                          <label style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#f57c00', cursor: 'pointer' }}>
+                            背景画像 (場所ごとの切り替え)
+                          </label>
+                          {isBackgroundsOpen ? <ChevronDown size={16} color="#f57c00" /> : <ChevronRight size={16} color="#f57c00" />}
+                        </div>
+
+                        {isBackgroundsOpen && (
+                          <>
+                            <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '8px' }}>
+                              画像をアップロードするとファイル名がそのままタグになります（例: `School.jpg` → `[School]`）。<br />
+                              複数選択可能です。
+                            </p>
+
+                            {/* Smart Upload Button */}
+                            <div style={{ marginBottom: '10px' }}>
+                              <label className="import-btn" style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                backgroundColor: '#fff3e0', border: '1px solid #ffb74d', color: '#e65100',
+                                padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold'
+                              }}>
+                                <Upload size={16} /> インポート (複数画像を選択)
+                                <input
+                                  type="file"
+                                  multiple
+                                  accept="image/*"
+                                  onChange={(e) => handleSmartAssetUpload('backgrounds', e)}
+                                  style={{ display: 'none' }}
+                                />
+                              </label>
+                            </div>
+
+                            {/* List existing backgrounds (GRID LAYOUT) */}
+                            <div style={{
+                              maxHeight: '300px',
+                              overflowY: 'auto',
+                              border: '1px solid #eee',
+                              borderRadius: '4px',
+                              padding: '8px',
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', // Restored larger thumbs
+                              gap: '8px',
+                              backgroundColor: '#fafafa'
+                            }}>
+                              {Object.keys(activeProfile.backgrounds || {}).concat(activeProfile.backgroundImage && !activeProfile.backgrounds?.default ? ['default (旧)'] : []).map(tag => {
+                                const isLegacy = tag === 'default (旧)'
+                                const realTag = isLegacy ? 'default' : tag
+                                const imgSrc = isLegacy ? activeProfile.backgroundImage : activeProfile.backgrounds[tag]
+
+                                if (isLegacy && !imgSrc) return null
+
+                                return (
+                                  <div key={tag} style={{
+                                    position: 'relative',
+                                    border: '1px solid #ddd',
+                                    borderRadius: '4px',
+                                    overflow: 'hidden',
+                                    backgroundColor: '#fff',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                                    display: 'flex',
+                                    flexDirection: 'column'
+                                  }}>
+                                    <div
+                                      style={{
+                                        height: '80px',
+                                        backgroundColor: '#eee',
+                                        cursor: 'zoom-in',
+                                        backgroundImage: imgSrc ? `url(${imgSrc})` : 'none',
+                                        backgroundSize: 'cover',
+                                        backgroundPosition: 'center'
+                                      }}
+                                      onClick={() => setPreviewImage(imgSrc)}
+                                      title="クリックして拡大"
+                                    />
+                                    <div style={{ padding: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff' }}>
+                                      <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#ef6c00', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '50px' }} title={realTag}>
+                                        {realTag}
+                                      </span>
+                                      <div style={{ display: 'flex', gap: '2px' }}>
+                                        <button
+                                          onClick={() => handleSetDefaultBackground(realTag)}
+                                          style={{ border: 'none', background: 'none', color: activeProfile.defaultBackground === realTag ? '#ffb300' : '#e0e0e0', cursor: 'pointer', padding: '2px' }}
+                                          title={activeProfile.defaultBackground === realTag ? "現在のデフォルト" : "デフォルトに設定"}
+                                        >
+                                          <Star size={12} fill={activeProfile.defaultBackground === realTag ? '#ffb300' : 'none'} />
+                                        </button>
+                                        <button
+                                          onClick={() => setRenameModal({ type: 'bg', oldName: realTag, imageSrc: imgSrc, newName: realTag })}
+                                          style={{ border: 'none', background: 'none', color: '#1976d2', cursor: 'pointer', padding: '2px' }}
+                                          title="名前を変更"
+                                        >
+                                          <Edit2 size={12} />
+                                        </button>
+                                        <button onClick={() => handleRemoveBackgroundTag(realTag)} style={{ border: 'none', background: 'none', color: '#ef5350', cursor: 'pointer', padding: '2px' }} title="削除">
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            <div style={{ marginTop: '4px', textAlign: 'right' }}>
+                              <button onClick={handleAddBackgroundTag} style={{ fontSize: '0.7rem', color: '#999', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>+ タグ名を手動入力して追加</button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Emotions (GRID LAYOUT) */}
+                      <div>
+                        <div
+                          onClick={() => setIsEmotionsOpen(!isEmotionsOpen)}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            cursor: 'pointer', marginBottom: '4px', padding: '4px 0'
+                          }}
+                        >
+                          <label style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#ad1457', cursor: 'pointer' }}>
+                            立ち絵・表情差分 (感情ごとの切り替え)
+                          </label>
+                          {isEmotionsOpen ? <ChevronDown size={16} color="#ad1457" /> : <ChevronRight size={16} color="#ad1457" />}
+                        </div>
+
+                        {isEmotionsOpen && (
+                          <>
+                            <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '8px' }}>
+                              ファイル名がそのまま感情タグになります（例: `Joy.png` → `[Joy]`）。
+                            </p>
+
+                            {/* Buttons Container */}
+                            <div style={{ marginBottom: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <label className="import-btn" style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                backgroundColor: '#fce4ec', border: '1px solid #f06292', color: '#880e4f',
+                                padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold'
+                              }}>
+                                <Upload size={16} /> インポート (複数)
+                                <input
+                                  type="file"
+                                  multiple
+                                  accept="image/*"
+                                  onChange={(e) => handleSmartAssetUpload('emotions', e)}
+                                  style={{ display: 'none' }}
+                                />
+                              </label>
+
+                              <label className="import-btn" style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                backgroundColor: '#fff', border: '1px solid #f06292', color: '#880e4f',
+                                padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold'
+                              }}>
+                                <Plus size={16} /> 個別追加 (名前指定)
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={handleAddEmotionWithFile}
+                                  style={{ display: 'none' }}
+                                />
+                              </label>
+                            </div>
+
+                            {/* Quick Add Presets */}
+                            <div style={{ marginBottom: '10px', padding: '8px', backgroundColor: '#fff0f5', borderRadius: '4px' }}>
+                              <p style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#ad1457', marginBottom: '4px' }}>
+                                よく使う表情をボタンで追加（名前入力をスキップ）:
+                              </p>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                {['normal', 'smile', 'blush', 'love', 'shy', 'aroused'].map(tag => (
+                                  <button
+                                    key={tag}
+                                    onClick={() => handleQuickAdd(tag)}
+                                    style={{
+                                      border: '1px solid #fbdce7',
+                                      backgroundColor: '#fff',
+                                      color: '#d81b60',
+                                      borderRadius: '12px',
+                                      padding: '4px 10px',
+                                      fontSize: '0.75rem',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    + {tag}
+                                  </button>
+                                ))}
+                              </div>
+                              {/* Hidden Input for Quick Add */}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                ref={quickAddInputRef}
+                                style={{ display: 'none' }}
+                                onChange={handleQuickAddFileSelect}
+                              />
+                            </div>
+
+                            <div style={{
+                              maxHeight: '300px',
+                              overflowY: 'auto',
+                              border: '1px solid #eee',
+                              borderRadius: '4px',
+                              padding: '8px',
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', // Restored larger thumbs
+                              gap: '8px',
+                              backgroundColor: '#fafafa'
+                            }}>
+                              {Object.keys(activeProfile.emotions || {}).map(tag => (
+                                <div key={tag} style={{
+                                  position: 'relative',
+                                  border: '1px solid #ddd',
+                                  borderRadius: '4px',
+                                  overflow: 'hidden',
+                                  backgroundColor: '#fff',
+                                  boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                                  display: 'flex',
+                                  flexDirection: 'column'
+                                }}>
+                                  <div
+                                    style={{
+                                      height: '80px',
+                                      backgroundColor: '#eee',
+                                      cursor: 'zoom-in',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      padding: '4px'
+                                    }}
+                                    onClick={() => setPreviewImage(activeProfile.emotions[tag])}
+                                    title="クリックして拡大"
+                                  >
+                                    {activeProfile.emotions[tag] ? (
+                                      <img src={activeProfile.emotions[tag]} alt={tag} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                    ) : (
+                                      <span style={{ fontSize: '0.7rem', color: '#999' }}>No Img</span>
+                                    )}
+                                  </div>
+                                  <div style={{ padding: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', borderTop: '1px solid #eee' }}>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#d81b60', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '40px' }} title={tag}>
+                                      {tag}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: '2px' }}>
+                                      <button
+                                        onClick={() => setRenameModal({ type: 'emotion', oldName: tag, imageSrc: activeProfile.emotions[tag], newName: tag })}
+                                        style={{ border: 'none', background: 'none', color: '#666', cursor: 'pointer', padding: '2px' }}
+                                        title="名前を変更"
+                                      >
+                                        <Edit2 size={12} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleSetDefaultEmotion(tag)}
+                                        style={{ border: 'none', background: 'none', color: activeProfile.defaultEmotion === tag ? '#ffb300' : '#e0e0e0', cursor: 'pointer', padding: '2px' }}
+                                        title={activeProfile.defaultEmotion === tag ? "現在のデフォルト" : "デフォルトに設定"}
+                                      >
+                                        <Star size={12} fill={activeProfile.defaultEmotion === tag ? '#ffb300' : 'none'} />
+                                      </button>
+                                      <button onClick={() => handleRemoveEmotionTag(tag)} style={{ border: 'none', background: 'none', color: '#ef5350', cursor: 'pointer', padding: '2px' }} title="削除">
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ marginTop: '4px', textAlign: 'right' }}>
+                              <button onClick={handleAddEmotionTag} style={{ fontSize: '0.7rem', color: '#999', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>+ タグ名を手動入力して追加</button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+
+                    {/* 4. System Prompt */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsSystemPromptSectionOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isSystemPromptSectionOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <Bot size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>システムプロンプト (役割)</label>
+                        </div>
+                      </div>
+
+                      {isSystemPromptSectionOpen && (
+                        <div style={{ marginTop: '8px' }}>
+                          <textarea
+                            className="system-prompt-input"
+                            value={activeProfile.systemPrompt}
+                            onChange={(e) => handleUpdateActiveProfile('systemPrompt', e.target.value)}
+                            placeholder="例: あなたは猫です。語尾にニャをつけてください。"
+                            rows={3}
+                          />
+                          <button
+                            onClick={() => setFullscreenEditor({
+                              open: true,
+                              title: '📝 システムプロンプト編集',
+                              value: activeProfile.systemPrompt || '',
+                              onSave: (val) => handleUpdateActiveProfile('systemPrompt', val)
+                            })}
+                            style={{
+                              marginTop: '8px',
+                              padding: '6px 12px',
+                              backgroundColor: '#e3f2fd',
+                              border: '1px solid #90caf9',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '0.8rem'
+                            }}
+                          >
+                            🖥️ 全画面で編集
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 4.5. Character Sheet (Collapsible) */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsCharacterSheetOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isCharacterSheetOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <FileText size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>キャラクターシート</label>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '2px 6px', borderRadius: '4px' }}>自動XML化</span>
+                        </div>
+                      </div>
+
+                      {isCharacterSheetOpen && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                          {/* Name */}
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>名前</label>
+                            <input
+                              type="text"
+                              className="api-key-input"
+                              value={activeProfile.characterSheet?.name || ''}
+                              onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, name: e.target.value })}
+                              placeholder="例: へし切長谷部"
+                            />
+                          </div>
+                          {/* Personality */}
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>性格</label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.characterSheet?.personality || ''}
+                              onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, personality: e.target.value })}
+                              placeholder="例: 真面目で献身的、独占欲が強い"
+                              rows={2}
+                            />
+                            <button
+                              onClick={() => setFullscreenEditor({
+                                open: true,
+                                title: '🧠 性格 編集',
+                                value: activeProfile.characterSheet?.personality || '',
+                                onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, personality: val })
+                              })}
+                              style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#f3e5f5', border: '1px solid #ce93d8', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                            >
+                              🖥️ 全画面編集
+                            </button>
+                          </div>
+                          {/* Appearance */}
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>外見</label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.characterSheet?.appearance || ''}
+                              onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, appearance: e.target.value })}
+                              placeholder="例: 黒髪、切れ長の目、端正な顔立ち"
+                              rows={2}
+                            />
+                            <button
+                              onClick={() => setFullscreenEditor({
+                                open: true,
+                                title: '👤 外見 編集',
+                                value: activeProfile.characterSheet?.appearance || '',
+                                onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, appearance: val })
+                              })}
+                              style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#e0f7fa', border: '1px solid #80deea', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                            >
+                              🖥️ 全画面編集
+                            </button>
+                          </div>
+                          {/* Relationship */}
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>関係性</label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.characterSheet?.relationship || ''}
+                              onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, relationship: e.target.value })}
+                              placeholder="例: 主の恋人兼従者として仕えている"
+                              rows={2}
+                            />
+                            <button
+                              onClick={() => setFullscreenEditor({
+                                open: true,
+                                title: '💑 関係性 編集',
+                                value: activeProfile.characterSheet?.relationship || '',
+                                onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, relationship: val })
+                              })}
+                              style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#fce4ec', border: '1px solid #f48fb1', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                            >
+                              🖥️ 全画面編集
+                            </button>
+                          </div>
+                          {/* Preferences */}
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>好きなこと</label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.characterSheet?.preferences || ''}
+                              onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, preferences: e.target.value })}
+                              placeholder="例: 主を甘やかすこと、褒められること、整理整頓"
+                              rows={2}
+                            />
+                            <button
+                              onClick={() => setFullscreenEditor({
+                                open: true,
+                                title: '💝 好きなこと 編集',
+                                value: activeProfile.characterSheet?.preferences || '',
+                                onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, preferences: val })
+                              })}
+                              style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                            >
+                              🖥️ 全画面編集
+                            </button>
+                          </div>
+                          {/* Fetishes */}
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#e57373', marginBottom: '2px', display: 'block' }}>性癖・嗜好</label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.characterSheet?.fetishes || ''}
+                              onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, fetishes: e.target.value })}
+                              placeholder="例: 支配欲、焦らし、言葉責め"
+                              rows={2}
+                            />
+                            <button
+                              onClick={() => setFullscreenEditor({
+                                open: true,
+                                title: '❤️ 性癖・嗜好 編集',
+                                value: activeProfile.characterSheet?.fetishes || '',
+                                onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, fetishes: val })
+                              })}
+                              style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#ffebee', border: '1px solid #ef9a9a', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                            >
+                              🖥️ 全画面編集
+                            </button>
+                          </div>
+                          {/* Special Abilities */}
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#7986cb', marginBottom: '2px', display: 'block' }}>特殊能力・スキル</label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.characterSheet?.abilities || ''}
+                              onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, abilities: e.target.value })}
+                              placeholder="例: 刀剣男士としての戦闘能力、主への異常な執着"
+                              rows={2}
+                            />
+                            <button
+                              onClick={() => setFullscreenEditor({
+                                open: true,
+                                title: '⚡ 特殊能力・スキル 編集',
+                                value: activeProfile.characterSheet?.abilities || '',
+                                onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, abilities: val })
+                              })}
+                              style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#e8eaf6', border: '1px solid #9fa8da', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                            >
+                              🖥️ 全画面編集
+                            </button>
+                          </div>
+                          {/* Other */}
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '2px', display: 'block' }}>その他</label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.characterSheet?.other || ''}
+                              onChange={(e) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, other: e.target.value })}
+                              placeholder="その他の設定やメモ"
+                              rows={2}
+                            />
+                            <button
+                              onClick={() => setFullscreenEditor({
+                                open: true,
+                                title: '📋 その他 編集',
+                                value: activeProfile.characterSheet?.other || '',
+                                onSave: (val) => handleUpdateActiveProfile('characterSheet', { ...activeProfile.characterSheet, other: val })
+                              })}
+                              style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem' }}
+                            >
+                              🖥️ 全画面編集
+                            </button>
+                          </div>
+
+                          <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '4px' }}>
+                            ※入力内容は自動的にXML形式に変換されてLLMに送信されます
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 4.1. User Profile & World Setting */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsUserWorldSettingsOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isUserWorldSettingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <Bot size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>ユーザー & 世界観設定</label>
+                        </div>
+                      </div>
+
+                      {isUserWorldSettingsOpen && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                              ユーザー設定（主の設定）
+                            </label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.userProfile || ''}
+                              onChange={(e) => handleUpdateActiveProfile('userProfile', e.target.value)}
+                              placeholder="例: 名前は「蒼月 柊」。本丸の審神者。温厚で優しい性格。"
+                              rows={2}
+                              style={{ marginBottom: '4px' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                              世界観設定
+                            </label>
+                            <textarea
+                              className="system-prompt-input"
+                              value={activeProfile.worldSetting || ''}
+                              onChange={(e) => handleUpdateActiveProfile('worldSetting', e.target.value)}
+                              placeholder="例: 現代の本丸。二人きりで暮らしている。"
+                              rows={2}
+                              style={{ marginBottom: '4px' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                              応答スタイル
+                            </label>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                onClick={() => handleUpdateActiveProfile('responseStyle', 'chat')}
+                                style={{
+                                  flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                                  backgroundColor: (activeProfile.responseStyle || 'chat') === 'chat' ? '#e3f2fd' : '#f5f5f5',
+                                  color: (activeProfile.responseStyle || 'chat') === 'chat' ? '#1565c0' : '#666',
+                                  fontWeight: 'bold', cursor: 'pointer'
+                                }}
+                              >
+                                💬 チャット形式
+                              </button>
+                              <button
+                                onClick={() => handleUpdateActiveProfile('responseStyle', 'novel')}
+                                style={{
+                                  flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc',
+                                  backgroundColor: activeProfile.responseStyle === 'novel' ? '#fce4ec' : '#f5f5f5',
+                                  color: activeProfile.responseStyle === 'novel' ? '#c2185b' : '#666',
+                                  fontWeight: 'bold', cursor: 'pointer'
+                                }}
+                              >
+                                📖 小説形式
+                              </button>
+                            </div>
+                            <p style={{ fontSize: '0.7rem', color: '#888', marginTop: '4px' }}>
+                              チャット形式: 一人称の会話。小説形式: 三人称の物語風描写。
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Ollama Translation Settings */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsOllamaTranslationOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isOllamaTranslationOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <Bot size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>翻訳設定 (Ollama用)</label>
+                        </div>
+                      </div>
+
+                      {isOllamaTranslationOpen && (
+                        <>
+                          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px', marginTop: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                                AIの一人称
+                              </label>
+                              <input
+                                type="text"
+                                value={firstPerson}
+                                onChange={(e) => setFirstPerson(e.target.value)}
+                                placeholder="俺"
+                                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                              />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                                主の呼び方
+                              </label>
+                              <input
+                                type="text"
+                                value={masterTitle}
+                                onChange={(e) => setMasterTitle(e.target.value)}
+                                placeholder="主"
+                                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                              />
+                            </div>
+                          </div>
+                          <div style={{ marginTop: '12px' }}>
+                            <label style={{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'block' }}>
+                              DeepL APIキー (優先翻訳エンジン)
+                            </label>
+                            <input
+                              type="password"
+                              value={deeplApiKey}
+                              onChange={(e) => setDeeplApiKey(e.target.value)}
+                              placeholder="DeepL APIキーを入力... (なくてもOK)"
+                              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                            />
+                          </div>
+                          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <input
+                              type="checkbox"
+                              id="translationEnabled"
+                              checked={translationEnabled}
+                              onChange={(e) => setTranslationEnabled(e.target.checked)}
+                            />
+                            <label htmlFor="translationEnabled" style={{ fontSize: '12px', color: '#333' }}>
+                              Ollama使用時にAI応答を日本語に自動翻訳
+                            </label>
+                          </div>
+                          <p style={{ fontSize: '11px', color: '#888', margin: '8px 0 0 0' }}>
+                            ※翻訳後に「私」→「{firstPerson}」、「あなた」→「{masterTitle}」に自動置換。
+                            <br />※DeepL失敗時はGeminiで翻訳します。
+                          </p>
+                        </>
+                      )}
+                    </div>
+
+                    {/* 5. Long Term Memory */}
+                    <div className="memory-section">
+                      <div
+                        className="section-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setIsMemorySectionOpen(prev => !prev)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {isMemorySectionOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <Book size={16} />
+                          <label className="setting-label" style={{ cursor: 'pointer' }}>長期記憶 (Context)</label>
+                        </div>
+                      </div>
+
+                      {isMemorySectionOpen && (
+                        <textarea
+                          className="system-prompt-input"
+                          value={activeProfile.memory}
+                          onChange={(e) => handleUpdateActiveProfile('memory', e.target.value)}
+                          placeholder="例: ユーザーは辛いものが好き。来週旅行に行く予定。"
+                          rows={5}
+                          style={{ marginTop: '8px' }}
+                        />
+                      )}
+                    </div>
+
+                    {/* 6. Data Management */}
+                    <div className="memory-section" style={{ borderTop: '2px solid #ddd', paddingTop: '16px', marginTop: '16px' }}>
+                      <div className="section-header">
+                        <Files size={16} />
+                        <label className="setting-label">データ管理 (バックアップ)</label>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                        <button onClick={handleExportHistory} className="setting-btn" style={{ flex: 1 }}>
+                          <DownloadCloud size={16} /> 履歴を保存 (保存)
+                        </button>
+                        <label className="setting-btn" style={{ flex: 1, cursor: 'pointer', textAlign: 'center' }}>
+                          <Upload size={16} /> 履歴を復元 (読込)
+                          <input type="file" accept=".json" onChange={handleImportHistory} style={{ display: 'none' }} />
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* 7. Danger Zone */}
+                    <div className="danger-zone">
+                      <button className="danger-btn" onClick={handleCompressAllAssets} style={{ backgroundColor: '#e3f2fd', color: '#1565c0', border: '1px solid #bbdefb', marginBottom: '8px' }}>
+                        <DownloadCloud size={16} /> 画像を一括圧縮して容量を節約
+                      </button>
+                      <button className="danger-btn" onClick={handleClearChatHistory}>
+                        <Trash2 size={16} /> 会話履歴を消去
+                      </button>
+                    </div>
+
+                    {/* 8. Utilities (Reload) */}
+                    <div className="memory-section" style={{ borderTop: '2px solid #ddd', paddingTop: '16px', marginTop: '16px' }}>
+                      <div className="section-header">
+                        <RefreshCw size={16} />
+                        <label className="setting-label">ユーティリティ</label>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (confirm('アプリを再読み込みしますか？')) {
+                            window.location.reload()
+                          }
+                        }}
+                        className="setting-btn"
+                        style={{
+                          width: '100%',
+                          justifyContent: 'center',
+                          backgroundColor: '#f5f5f5',
+                          color: '#333',
+                          border: '1px solid #ccc',
+                          padding: '12px',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        <RefreshCw size={16} /> アプリを再読み込み (Reload App)
+                      </button>
+
+                      {/* Close Button */}
+                      <button className="close-settings-btn" onClick={() => setIsMemoryOpen(false)}>
+                        設定を閉じる
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="crop-workspace">
-                <div
-                  className="crop-area-container"
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
-                  onTouchStart={handleTouchStart}
-                  onTouchMove={handleTouchMove}
-                  onTouchEnd={handleMouseUp}
-                >
+            )
+          }
+
+          {/* Crop Modal */}
+          {
+            imageToCrop && (
+              <div className="modal-overlay" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-content crop-modal">
+                  <div className="modal-header">
+                    <h3>アイコン画像を編集</h3>
+                    <button onClick={handleCancelCrop}><ChevronLeft size={24} /></button>
+                  </div>
+                  <div className="crop-workspace">
+                    <div
+                      className="crop-area-container"
+                      onMouseDown={handleMouseDown}
+                      onMouseMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                      onMouseLeave={handleMouseUp}
+                      onTouchStart={handleTouchStart}
+                      onTouchMove={handleTouchMove}
+                      onTouchEnd={handleMouseUp}
+                    >
+                      <img
+                        ref={renderImageRef}
+                        src={imageToCrop}
+                        className="crop-target-image"
+                        style={{ transform: `translate(${cropPos.x}px, ${cropPos.y}px) scale(${cropZoom})` }}
+                        draggable={false}
+                        alt="Crop target"
+                      />
+                      <div className="crop-mask"></div>
+                    </div>
+                    <div className="crop-controls">
+                      <ZoomIn size={20} />
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="3.0"
+                        step="0.1"
+                        value={cropZoom}
+                        onChange={(e) => setCropZoom(parseFloat(e.target.value))}
+                        className="crop-zoom-slider"
+                      />
+                    </div>
+                    <div className="crop-instructions">
+                      <Move size={14} /> ドラッグで移動、スライダーで拡大
+                    </div>
+                    <div className="crop-actions">
+                      <button className="crop-btn cancel" onClick={handleCancelCrop}>キャンセル</button>
+                      <button className="crop-btn save" onClick={handleCropComplete}>
+                        <Check size={18} /> 決定
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
+          {/* PREVIEW MODAL */}
+          {
+            previewImage && (
+              <div style={{
+                position: 'fixed', inset: 0, zIndex: 10000,
+                backgroundColor: 'rgba(0,0,0,0.85)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer'
+              }} onClick={() => setPreviewImage(null)}>
+                <div style={{ position: 'relative', width: '90%', height: '90%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <img
-                    ref={renderImageRef}
-                    src={imageToCrop}
-                    className="crop-target-image"
-                    style={{ transform: `translate(${cropPos.x}px, ${cropPos.y}px) scale(${cropZoom})` }}
-                    draggable={false}
-                    alt="Crop target"
+                    src={previewImage}
+                    alt="Preview"
+                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', borderRadius: '4px' }}
                   />
-                  <div className="crop-mask"></div>
-                </div>
-                <div className="crop-controls">
-                  <ZoomIn size={20} />
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="3.0"
-                    step="0.1"
-                    value={cropZoom}
-                    onChange={(e) => setCropZoom(parseFloat(e.target.value))}
-                    className="crop-zoom-slider"
-                  />
-                </div>
-                <div className="crop-instructions">
-                  <Move size={14} /> ドラッグで移動、スライダーで拡大
-                </div>
-                <div className="crop-actions">
-                  <button className="crop-btn cancel" onClick={handleCancelCrop}>キャンセル</button>
-                  <button className="crop-btn save" onClick={handleCropComplete}>
-                    <Check size={18} /> 決定
-                  </button>
+                  <div style={{ position: 'absolute', bottom: 20, color: 'white', backgroundColor: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '20px', pointerEvents: 'none' }}>
+                    クリックして閉じる
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-        )
-      }
+            )
+          }
 
-      {/* PREVIEW MODAL */}
-      {
-        previewImage && (
-          <div style={{
-            position: 'fixed', inset: 0, zIndex: 10000,
-            backgroundColor: 'rgba(0,0,0,0.85)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer'
-          }} onClick={() => setPreviewImage(null)}>
-            <div style={{ position: 'relative', width: '90%', height: '90%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <img
-                src={previewImage}
-                alt="Preview"
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', borderRadius: '4px' }}
-              />
-              <div style={{ position: 'absolute', bottom: 20, color: 'white', backgroundColor: 'rgba(0,0,0,0.5)', padding: '8px 16px', borderRadius: '20px', pointerEvents: 'none' }}>
-                クリックして閉じる
-              </div>
-            </div>
-          </div>
-        )
-      }
-
-      {/* RENAME MODAL with Large Image Preview */}
-      {
-        renameModal && (
-          <div style={{
-            position: 'fixed', inset: 0, zIndex: 10001,
-            backgroundColor: 'rgba(0,0,0,0.9)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexDirection: 'column', gap: '20px', padding: '20px'
-          }}>
-            {/* Close button */}
-            <button
-              onClick={() => setRenameModal(null)}
-              style={{ position: 'absolute', top: '20px', right: '20px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '2rem' }}
-            >
-              ✕
-            </button>
-
-            {/* Large Image Preview */}
-            <div style={{ maxWidth: '80%', maxHeight: '50vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {renameModal.imageSrc ? (
-                <img
-                  src={renameModal.imageSrc}
-                  alt={renameModal.oldName}
-                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}
-                />
-              ) : (
-                <div style={{ color: '#888', fontSize: '1.5rem' }}>画像なし</div>
-              )}
-            </div>
-
-            {/* Name Input */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', width: '100%', maxWidth: '400px' }}>
-              <label style={{ color: 'white', fontSize: '1rem' }}>
-                {renameModal.type === 'bg' ? '背景の名前' : '表情の名前'}（日本語OK）
-              </label>
-              <input
-                type="text"
-                value={renameModal.newName}
-                onChange={(e) => setRenameModal({ ...renameModal, newName: e.target.value })}
-                style={{ width: '100%', padding: '12px', fontSize: '1.1rem', borderRadius: '8px', border: 'none', textAlign: 'center' }}
-                autoFocus
-              />
-              <div style={{ display: 'flex', gap: '12px' }}>
+          {/* RENAME MODAL with Large Image Preview */}
+          {
+            renameModal && (
+              <div style={{
+                position: 'fixed', inset: 0, zIndex: 10001,
+                backgroundColor: 'rgba(0,0,0,0.9)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexDirection: 'column', gap: '20px', padding: '20px'
+              }}>
+                {/* Close button */}
                 <button
                   onClick={() => setRenameModal(null)}
-                  style={{ padding: '10px 24px', fontSize: '1rem', borderRadius: '8px', border: '2px solid white', background: 'transparent', color: 'white', cursor: 'pointer' }}
+                  style={{ position: 'absolute', top: '20px', right: '20px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '2rem' }}
                 >
-                  キャンセル
+                  ✕
                 </button>
-                <button
-                  onClick={() => {
-                    const { type, oldName, newName } = renameModal
-                    if (!newName.trim() || newName === oldName) {
-                      setRenameModal(null)
-                      return
-                    }
-                    if (type === 'bg') {
-                      setProfiles(prev => prev.map(p => {
-                        if (p.id === activeProfileId && p.backgrounds) {
-                          if (p.backgrounds[newName.trim()]) {
-                            alert('その名前は既に使用されています。')
-                            return p
-                          }
-                          const newBgs = { ...p.backgrounds }
-                          newBgs[newName.trim()] = newBgs[oldName]
-                          delete newBgs[oldName]
-                          return { ...p, backgrounds: newBgs, defaultBackground: p.defaultBackground === oldName ? newName.trim() : p.defaultBackground }
+
+                {/* Large Image Preview */}
+                <div style={{ maxWidth: '80%', maxHeight: '50vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {renameModal.imageSrc ? (
+                    <img
+                      src={renameModal.imageSrc}
+                      alt={renameModal.oldName}
+                      style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}
+                    />
+                  ) : (
+                    <div style={{ color: '#888', fontSize: '1.5rem' }}>画像なし</div>
+                  )}
+                </div>
+
+                {/* Name Input */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', width: '100%', maxWidth: '400px' }}>
+                  <label style={{ color: 'white', fontSize: '1rem' }}>
+                    {renameModal.type === 'bg' ? '背景の名前' : '表情の名前'}（日本語OK）
+                  </label>
+                  <input
+                    type="text"
+                    value={renameModal.newName}
+                    onChange={(e) => setRenameModal({ ...renameModal, newName: e.target.value })}
+                    style={{ width: '100%', padding: '12px', fontSize: '1.1rem', borderRadius: '8px', border: 'none', textAlign: 'center' }}
+                    autoFocus
+                  />
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <button
+                      onClick={() => setRenameModal(null)}
+                      style={{ padding: '10px 24px', fontSize: '1rem', borderRadius: '8px', border: '2px solid white', background: 'transparent', color: 'white', cursor: 'pointer' }}
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      onClick={() => {
+                        const { type, oldName, newName } = renameModal
+                        if (!newName.trim() || newName === oldName) {
+                          setRenameModal(null)
+                          return
                         }
-                        return p
-                      }))
-                    } else {
-                      setProfiles(prev => prev.map(p => {
-                        if (p.id === activeProfileId && p.emotions) {
-                          if (p.emotions[newName.trim()]) {
-                            alert('その名前は既に使用されています。')
+                        if (type === 'bg') {
+                          setProfiles(prev => prev.map(p => {
+                            if (p.id === activeProfileId && p.backgrounds) {
+                              if (p.backgrounds[newName.trim()]) {
+                                alert('その名前は既に使用されています。')
+                                return p
+                              }
+                              const newBgs = { ...p.backgrounds }
+                              newBgs[newName.trim()] = newBgs[oldName]
+                              delete newBgs[oldName]
+                              return { ...p, backgrounds: newBgs, defaultBackground: p.defaultBackground === oldName ? newName.trim() : p.defaultBackground }
+                            }
                             return p
-                          }
-                          const newEmotions = { ...p.emotions }
-                          newEmotions[newName.trim()] = newEmotions[oldName]
-                          delete newEmotions[oldName]
-                          return { ...p, emotions: newEmotions, defaultEmotion: p.defaultEmotion === oldName ? newName.trim() : p.defaultEmotion }
+                          }))
+                        } else {
+                          setProfiles(prev => prev.map(p => {
+                            if (p.id === activeProfileId && p.emotions) {
+                              if (p.emotions[newName.trim()]) {
+                                alert('その名前は既に使用されています。')
+                                return p
+                              }
+                              const newEmotions = { ...p.emotions }
+                              newEmotions[newName.trim()] = newEmotions[oldName]
+                              delete newEmotions[oldName]
+                              return { ...p, emotions: newEmotions, defaultEmotion: p.defaultEmotion === oldName ? newName.trim() : p.defaultEmotion }
+                            }
+                            return p
+                          }))
                         }
-                        return p
-                      }))
-                    }
-                    setRenameModal(null)
-                  }}
-                  style={{ padding: '10px 24px', fontSize: '1rem', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}
-                >
-                  保存
-                </button>
+                        setRenameModal(null)
+                      }}
+                      style={{ padding: '10px 24px', fontSize: '1rem', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
+          {/* FULLSCREEN EDITOR MODAL */}
+          {fullscreenEditor.open && (
+            <div style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 10001,
+              backgroundColor: 'rgba(0,0,0,0.9)',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: '20px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h2 style={{ color: 'white', margin: 0, fontSize: '1.2rem' }}>{fullscreenEditor.title}</h2>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <label style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#4caf50',
+                    color: 'white',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}>
+                    📁 TXTインポート
+                    <input
+                      type="file"
+                      accept=".txt,.md"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) {
+                          const reader = new FileReader()
+                          reader.onload = (ev) => {
+                            setFullscreenEditor(prev => ({ ...prev, value: ev.target.result }))
+                          }
+                          reader.readAsText(file)
+                        }
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                  <button
+                    onClick={() => setFullscreenEditor({ open: false, title: '', value: '', onSave: null })}
+                    style={{ padding: '8px 16px', backgroundColor: '#666', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (fullscreenEditor.onSave) {
+                        fullscreenEditor.onSave(fullscreenEditor.value)
+                      }
+                      setFullscreenEditor({ open: false, title: '', value: '', onSave: null })
+                    }}
+                    style={{ padding: '8px 16px', backgroundColor: '#2196f3', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                  >
+                    保存
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={fullscreenEditor.value}
+                onChange={(e) => setFullscreenEditor(prev => ({ ...prev, value: e.target.value }))}
+                style={{
+                  flex: 1,
+                  width: '100%',
+                  padding: '16px',
+                  fontSize: '1rem',
+                  fontFamily: 'monospace',
+                  backgroundColor: '#1e1e1e',
+                  color: '#d4d4d4',
+                  border: '1px solid #444',
+                  borderRadius: '8px',
+                  resize: 'none',
+                  outline: 'none'
+                }}
+                placeholder="ここにテキストを入力..."
+              />
+              <div style={{ color: '#888', fontSize: '0.8rem', marginTop: '8px' }}>
+                文字数: {fullscreenEditor.value?.length || 0} | Ctrl+Enter で保存
               </div>
             </div>
-          </div>
-        )
-      }
-
-      {/* FULLSCREEN EDITOR MODAL */}
-      {fullscreenEditor.open && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 10001,
-          backgroundColor: 'rgba(0,0,0,0.9)',
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '20px'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h2 style={{ color: 'white', margin: 0, fontSize: '1.2rem' }}>{fullscreenEditor.title}</h2>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <label style={{
-                padding: '8px 16px',
-                backgroundColor: '#4caf50',
-                color: 'white',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '0.9rem'
-              }}>
-                📁 TXTインポート
-                <input
-                  type="file"
-                  accept=".txt,.md"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0]
-                    if (file) {
-                      const reader = new FileReader()
-                      reader.onload = (ev) => {
-                        setFullscreenEditor(prev => ({ ...prev, value: ev.target.result }))
-                      }
-                      reader.readAsText(file)
-                    }
-                    e.target.value = ''
-                  }}
-                />
-              </label>
-              <button
-                onClick={() => setFullscreenEditor({ open: false, title: '', value: '', onSave: null })}
-                style={{ padding: '8px 16px', backgroundColor: '#666', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={() => {
-                  if (fullscreenEditor.onSave) {
-                    fullscreenEditor.onSave(fullscreenEditor.value)
-                  }
-                  setFullscreenEditor({ open: false, title: '', value: '', onSave: null })
-                }}
-                style={{ padding: '8px 16px', backgroundColor: '#2196f3', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
-              >
-                保存
-              </button>
-            </div>
-          </div>
-          <textarea
-            value={fullscreenEditor.value}
-            onChange={(e) => setFullscreenEditor(prev => ({ ...prev, value: e.target.value }))}
-            style={{
-              flex: 1,
-              width: '100%',
-              padding: '16px',
-              fontSize: '1rem',
-              fontFamily: 'monospace',
-              backgroundColor: '#1e1e1e',
-              color: '#d4d4d4',
-              border: '1px solid #444',
-              borderRadius: '8px',
-              resize: 'none',
-              outline: 'none'
-            }}
-            placeholder="ここにテキストを入力..."
-          />
-          <div style={{ color: '#888', fontSize: '0.8rem', marginTop: '8px' }}>
-            文字数: {fullscreenEditor.value?.length || 0} | Ctrl+Enter で保存
-          </div>
+          )}
         </div>
       )}
-    </div >
+    </div>
   )
-
 }
 
 export default App
 
-
 // End of file
+
