@@ -4799,19 +4799,68 @@ Acknowledge the touch naturally in your response and continue the conversation. 
     setPhoneCallStartTime(null)
   }
 
-  const handlePhoneSend = async () => {
-    if (!inputText.trim()) return
+  // Voice recognition for phone mode
+  const startVoiceRecognition = () => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      alert('お使いのブラウザは音声認識に対応していません')
+      return
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'ja-JP'
+    recognition.continuous = false
+    recognition.interimResults = false
+
+    recognition.onstart = () => {
+      setIsListening(true)
+      // Stop any ongoing TTS when user starts speaking
+      if ('speechSynthesis' in window) {
+        speechSynthesis.cancel()
+      }
+    }
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript
+      console.log('🎤 Voice input:', transcript)
+      setIsListening(false)
+      // Automatically send the voice input
+      handlePhoneSend(transcript)
+    }
+
+    recognition.onerror = (event) => {
+      console.error('Voice recognition error:', event.error)
+      setIsListening(false)
+    }
+
+    recognition.onend = () => {
+      setIsListening(false)
+    }
+
+    recognitionRef.current = recognition
+    recognition.start()
+  }
+
+  const stopVoiceRecognition = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      setIsListening(false)
+    }
+  }
+
+  const handlePhoneSend = async (voiceInput = null) => {
+    const textToSend = voiceInput || inputText.trim()
+    if (!textToSend) return
 
     const userMessage = {
       id: `msg_${Date.now()}`,
-      text: inputText.trim(),
+      text: textToSend,
       sender: 'user',
       timestamp: new Date().toISOString()
     }
 
     setPhoneMessages(prev => [...prev, userMessage])
-    const userInput = inputText
-    setInputText('')
+    if (!voiceInput) setInputText('')
     setIsLoading(true)
 
     try {
@@ -4822,33 +4871,12 @@ Acknowledge the touch naturally in your response and continue the conversation. 
 - 視覚的な描写（顔を見る、目を見つめる、表情を見る等）も描写しないでください
 - 「声が聞こえる」「電話ごしに」「受話器越しに」などの表現を使ってください
 - 相手の存在を感じながらも物理的には離れている状況を表現してください
+- 短く自然な会話を心がけてください
 `
+      const fullSystemPrompt = phoneSystemPrompt + '\n\n' + buildEnhancedSystemPrompt(activeProfile)
 
-      const fullPrompt = phoneSystemPrompt + '\n\n' + buildEnhancedSystemPrompt(activeProfile) + '\n\nユーザーのメッセージ: ' + userInput
-
-      let aiResponse = ''
-      if (useCli && isLocalServerAvailable && gatewayUrl) {
-        const res = await fetch(`${gatewayUrl}/api/gemini-proxy`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: userInput,
-            context: activeProfile?.context || '',
-            worldSetting: activeProfile?.worldSetting || '',
-            characterSheet: activeProfile?.characterSheet || {},
-            model: cliModel,
-            phoneMode: true,
-            phoneSystemPrompt: phoneSystemPrompt
-          })
-        })
-        const data = await res.json()
-        aiResponse = data.response || data.error || 'エラーが発生しました'
-      } else {
-        const gemini = new GoogleGenerativeAI(apiKey)
-        const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash-exp' })
-        const result = await model.generateContent(fullPrompt)
-        aiResponse = result.response.text()
-      }
+      // Use callGeminiAPI which handles CLI proxy with API fallback
+      let aiResponse = await callGeminiAPI(textToSend, fullSystemPrompt, activeProfile?.context || '', phoneMessages)
 
       // Apply pronoun replacement
       aiResponse = applyPronounReplacement(aiResponse)
@@ -4864,6 +4892,9 @@ Acknowledge the touch naturally in your response and continue the conversation. 
 
       // TTS: Read the response aloud
       if ('speechSynthesis' in window) {
+        // Cancel any ongoing speech
+        speechSynthesis.cancel()
+
         const utterance = new SpeechSynthesisUtterance(aiResponse)
         utterance.lang = 'ja-JP'
         utterance.rate = 1.0
@@ -4999,9 +5030,16 @@ Acknowledge the touch naturally in your response and continue the conversation. 
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handlePhoneSend()}
-              placeholder="話す..."
-              disabled={isLoading}
+              placeholder={isListening ? '聞いています...' : '話す...'}
+              disabled={isLoading || isListening}
             />
+            <button
+              className={`phone-mic-btn ${isListening ? 'listening' : ''}`}
+              onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
+              disabled={isLoading}
+            >
+              {isListening ? <MicOff size={20} /> : <Mic size={20} />}
+            </button>
             <button className="phone-send-btn" onClick={handlePhoneSend} disabled={isLoading || !inputText.trim()}>
               <Send size={20} />
             </button>
