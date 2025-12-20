@@ -4861,11 +4861,24 @@ Acknowledge the touch naturally in your response and continue the conversation. 
       }
 
       setPhoneMessages(prev => [...prev, aiMessage])
+
+      // TTS: Read the response aloud
+      if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(aiResponse)
+        utterance.lang = 'ja-JP'
+        utterance.rate = 1.0
+        utterance.pitch = 1.0
+        // Try to use a Japanese voice
+        const voices = speechSynthesis.getVoices()
+        const jaVoice = voices.find(v => v.lang.includes('ja')) || voices[0]
+        if (jaVoice) utterance.voice = jaVoice
+        speechSynthesis.speak(utterance)
+      }
     } catch (e) {
-      console.error('Phone AI error:', e)
+      console.error('Phone AI error:', e.message, e)
       const errorMessage = {
         id: `msg_${Date.now()}`,
-        text: '通話が途切れてしまいました...',
+        text: `通信エラー: ${e.message || '不明なエラー'}`,
         sender: 'character',
         timestamp: new Date().toISOString()
       }
@@ -4911,13 +4924,29 @@ Acknowledge the touch naturally in your response and continue the conversation. 
             <h1 className="mode-character-name">{activeProfile?.name || 'へし切長谷部'}</h1>
             <div className="mode-buttons">
               <button className="mode-btn mode-btn-chat" onClick={() => setAppMode('chat')}>
-                <MessageSquare size={32} />
+                <div className="mode-btn-icon-wrapper">
+                  <img
+                    src={activeProfile?.iconImage || '/default-icon.png'}
+                    alt=""
+                    className="mode-btn-character-icon"
+                    onError={(e) => e.target.style.display = 'none'}
+                  />
+                  <MessageSquare size={24} className="mode-btn-overlay-icon" />
+                </div>
                 <span>チャット</span>
               </button>
               <button className="mode-btn mode-btn-phone" onClick={handleStartPhone}>
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-                </svg>
+                <div className="mode-btn-icon-wrapper">
+                  <img
+                    src={activeProfile?.iconImage || '/default-icon.png'}
+                    alt=""
+                    className="mode-btn-character-icon"
+                    onError={(e) => e.target.style.display = 'none'}
+                  />
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mode-btn-overlay-icon">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+                  </svg>
+                </div>
                 <span>電話</span>
               </button>
             </div>
