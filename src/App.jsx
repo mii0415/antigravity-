@@ -4878,6 +4878,11 @@ Acknowledge the touch naturally in your response and continue the conversation. 
       // Use callGeminiAPI which handles CLI proxy with API fallback
       let aiResponse = await callGeminiAPI(textToSend, fullSystemPrompt, activeProfile?.context || '', phoneMessages)
 
+      // Ensure aiResponse is a string (callGeminiAPI might return object on error)
+      if (typeof aiResponse !== 'string') {
+        aiResponse = aiResponse?.response || aiResponse?.text || JSON.stringify(aiResponse) || 'エラーが発生しました'
+      }
+
       // Apply pronoun replacement
       aiResponse = applyPronounReplacement(aiResponse)
 
@@ -4932,35 +4937,50 @@ Acknowledge the touch naturally in your response and continue the conversation. 
         <div className="mode-selection-screen">
           <div className="mode-selection-content">
             <div className="mode-icon-container">
-              <img
-                src={activeProfile?.iconImage || '/default-icon.png'}
-                alt="Character"
-                className="mode-character-icon"
-                onError={(e) => e.target.style.display = 'none'}
-              />
+              {activeProfile?.iconImage ? (
+                <img
+                  src={activeProfile.iconImage}
+                  alt="Character"
+                  className="mode-character-icon"
+                />
+              ) : (
+                <svg viewBox="0 0 24 24" fill="white" className="mode-character-icon-svg">
+                  <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                </svg>
+              )}
             </div>
             <h1 className="mode-character-name">{activeProfile?.name || 'へし切長谷部'}</h1>
             <div className="mode-buttons">
               <button className="mode-btn mode-btn-chat" onClick={() => setAppMode('chat')}>
                 <div className="mode-btn-icon-wrapper">
-                  <img
-                    src={activeProfile?.iconImage || '/default-icon.png'}
-                    alt=""
-                    className="mode-btn-character-icon"
-                    onError={(e) => e.target.style.display = 'none'}
-                  />
+                  {activeProfile?.iconImage ? (
+                    <img
+                      src={activeProfile.iconImage}
+                      alt=""
+                      className="mode-btn-character-icon"
+                    />
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="white" className="mode-btn-fallback-icon">
+                      <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                    </svg>
+                  )}
                   <MessageSquare size={24} className="mode-btn-overlay-icon" />
                 </div>
                 <span>チャット</span>
               </button>
               <button className="mode-btn mode-btn-phone" onClick={handleStartPhone}>
                 <div className="mode-btn-icon-wrapper">
-                  <img
-                    src={activeProfile?.iconImage || '/default-icon.png'}
-                    alt=""
-                    className="mode-btn-character-icon"
-                    onError={(e) => e.target.style.display = 'none'}
-                  />
+                  {activeProfile?.iconImage ? (
+                    <img
+                      src={activeProfile.iconImage}
+                      alt=""
+                      className="mode-btn-character-icon"
+                    />
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="white" className="mode-btn-fallback-icon">
+                      <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                    </svg>
+                  )}
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mode-btn-overlay-icon">
                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
                   </svg>

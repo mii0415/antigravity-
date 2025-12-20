@@ -1603,6 +1603,18 @@ textarea {
   object-fit: cover;
 }
 
+.mode-character-icon-svg {
+  width: 60%;
+  height: 60%;
+  opacity: 0.7;
+}
+
+.mode-btn-fallback-icon {
+  width: 70%;
+  height: 70%;
+  opacity: 0.8;
+}
+
 .mode-character-name {
   font-size: 1.8rem;
   font-weight: 600;
