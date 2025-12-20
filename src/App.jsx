@@ -321,6 +321,41 @@ function App() {
     loadData()
   }, [])
 
+  // --- EFFECT: Handle ntfy notification URL parameter ---
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const notificationMessage = params.get('notification')
+    const newChat = params.get('newchat')
+
+    if (notificationMessage && newChat === 'true') {
+      console.log('📱 Received notification deep link:', notificationMessage)
+
+      // Create new session with notification message
+      const newSessionId = `session_${Date.now()}`
+      const newSession = {
+        id: newSessionId,
+        title: '時報からの新しいチャット',
+        lastUpdated: Date.now()
+      }
+
+      // Add new session and set as active
+      setSessions(prev => [newSession, ...prev])
+      setActiveSessionId(newSessionId)
+
+      // Add notification message to chat
+      const notificationMsg = {
+        id: `msg_${Date.now()}`,
+        text: notificationMessage,
+        sender: 'character',
+        timestamp: new Date().toISOString()
+      }
+      setMessages([notificationMsg])
+
+      // Clear URL parameters
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [])
+
   // --- EFFECT: Persist Sessions Metadata ---
   useEffect(() => {
     if (!isLoading && sessions.length > 0) {

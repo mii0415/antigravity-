@@ -779,11 +779,16 @@ const sendScheduledNotification = async (timeLabel) => {
     const ntfyTitle = ntfyTitles[timeLabel] || 'Notification';
 
     try {
+        // Encode the message for URL
+        const encodedMessage = encodeURIComponent(aiMessage);
+        const appUrl = `https://mii0415.github.io/antigravity-/?notification=${encodedMessage}&newchat=true`;
+
         const ntfyResponse = await fetch(`https://ntfy.sh/${ntfyTopic}`, {
             method: 'POST',
             headers: {
                 'Title': ntfyTitle,
-                'Priority': '4' // High priority for instant delivery
+                'Priority': '4', // High priority for instant delivery
+                'Click': appUrl // Open app when notification is tapped
             },
             body: aiMessage
         });
