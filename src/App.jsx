@@ -4884,55 +4884,20 @@ Acknowledge the touch naturally in your response and continue the conversation. 
       const aiMessage = {
         id: `msg_${Date.now()}`,
         text: aiResponse,
-        sender: 'character',
+        sender: 'ai', // Changed from 'character' to 'ai' for chat compatibility
         timestamp: new Date().toISOString()
       }
 
       setPhoneMessages(prev => [...prev, aiMessage])
 
-      // TTS: Read the response aloud
-      if ('speechSynthesis' in window) {
-        // Cancel any ongoing speech
-        speechSynthesis.cancel()
-
-        const utterance = new SpeechSynthesisUtterance(aiResponse)
-        utterance.lang = 'ja-JP'
-        utterance.rate = 1.0
-        utterance.pitch = 0.9 // Slightly lower pitch for male voice
-        // Try to use a Japanese MALE voice
-        const voices = speechSynthesis.getVoices()
-        // Prefer male Japanese voices (look for keywords like male, 男, Takumi, Kenji, etc.)
-        const jaVoices = voices.filter(v => v.lang.includes('ja'))
-        const maleVoice = jaVoices.find(v =>
-          v.name.toLowerCase().includes('male') ||
-          v.name.includes('男') ||
-          v.name.includes('Takumi') ||
-          v.name.includes('Kenji') ||
-          v.name.includes('Haruki') ||
-          v.name.includes('Google 日本語') // Default Google Japanese tends to be neutral/low
-        ) || jaVoices[0] || voices[0]
-        if (maleVoice) {
-          utterance.voice = maleVoice
-          console.log('🔊 TTS using voice:', maleVoice.name)
-        }
-
-        // Auto-restart voice recognition after TTS finishes
-        utterance.onend = () => {
-          console.log('🔊 TTS finished, ready for next input')
-          // Small delay before allowing next voice input
-          setTimeout(() => {
-            // User can press mic button again
-          }, 500)
-        }
-
-        speechSynthesis.speak(utterance)
-      }
+      // TTS: Use Style-Bert-VITS2 (長谷部の声) via speakText function
+      speakText(aiResponse, aiMessage.id)
     } catch (e) {
       console.error('Phone AI error:', e.message, e)
       const errorMessage = {
         id: `msg_${Date.now()}`,
         text: `通信エラー: ${e.message || '不明なエラー'}`,
-        sender: 'character',
+        sender: 'ai', // Changed from 'character' to 'ai' for chat compatibility
         timestamp: new Date().toISOString()
       }
       setPhoneMessages(prev => [...prev, errorMessage])
